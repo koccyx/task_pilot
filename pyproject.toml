@@ -1,0 +1,79 @@
+[project]
+name = "task_pilot"
+version = "0.0.1"
+description = "Core Telegram agent for working with Kaiten via MCP"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.11.7",
+    "aiofiles>=23.0.0",
+]
+
+[project.optional-dependencies]
+bot = [
+    "python-telegram-bot>=21.9",
+    "langchain>=0.3.27",
+    "langchain-openai>=0.3.29",
+    "langgraph>=0.2.0",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-multipart>=0.0.6",
+    "httpx>=0.28.1",
+    "langchain-mcp-adapters>=0.1.0",
+    "telegramify-markdown>=0.1.0",
+    "fastmcp>=2.3.2",
+]
+
+mcp = [
+    "fastmcp>=2.3.2",
+    "httpx>=0.28.1",
+]
+
+dev = [
+    "isort",
+    "black",
+    "flake8",
+    "mypy",
+    "pylint",
+    "types-aiofiles",
+]
+
+[project.scripts]
+telegram-chat-logger = "chat_bot.bot:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 88
+target-version = ['py310', 'py311']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pylint.messages_control]
+max-line-length = 88

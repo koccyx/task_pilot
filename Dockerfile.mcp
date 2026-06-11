@@ -1,0 +1,44 @@
+# Dockerfile for MCP Server
+# Use Python 3.11 slim image as base
+FROM python:3.11-slim AS base
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_NO_CACHE=1
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Create non-root user for security
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy project files for dependency installation
+COPY pyproject.toml ./
+COPY README.md ./
+
+# Install Python dependencies with uv (mcp extras)
+RUN uv pip install --system -e ".[mcp]"
+
+# Copy application code
+COPY chat_bot/ ./chat_bot/
+
+# Prepare app directory
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose MCP server port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8000), 5).close()" || exit 1
+
+# Run MCP server
+CMD ["python", "-m", "chat_bot.mcp_server.server"]

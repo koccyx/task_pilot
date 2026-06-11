@@ -1,0 +1,54 @@
+id: task_pilot-mcp-server
+name: task_pilot MCP Server
+description: MCP server for interacting with the Kaiten project management platform API
+version: 0.1.0
+
+tools:
+  - name: manage_spaces
+    description: List and create spaces
+  - name: manage_boards
+    description: List, create, update and delete boards
+  - name: manage_columns
+    description: List, create, update and remove columns
+  - name: manage_cards
+    description: Create, get, update, delete, list and search cards
+  - name: manage_comments
+    description: Add, show, update and delete comments
+  - name: manage_members
+    description: Manage card and space members
+  - name: manage_tags
+    description: List and create tags
+  - name: manage_time_logs
+    description: List and log time
+  - name: manage_users
+    description: List users and space members
+  - name: move_card
+    description: Move a card to another column or board
+  - name: mass_update
+    description: Bulk update cards
+  - name: auto_archive
+    description: Archive completed cards by age
+  - name: break_into_tasks
+    description: Break a card into subtasks
+
+environment:
+  rawEnvs:
+    - name: HOST
+      default: "0.0.0.0"
+    - name: PORT
+      default: "8000"
+  secretEnvs:
+    - name: KAITEN_API_URL
+      required: true
+    - name: KAITEN_API_TOKEN
+      required: true
+
+ports:
+  - port: 8000
+    protocol: http
+
+tags:
+  - kaiten
+  - project-management
+  - task-management
+  - mcp

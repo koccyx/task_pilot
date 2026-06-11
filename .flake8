@@ -1,0 +1,13 @@
+[flake8]
+max-line-length = 150
+exclude = 
+    .git,
+    __pycache__,
+    .venv,
+    task_pilot.egg-info,
+    .cursor
+ignore = 
+    E203,
+    W503,
+    F401,
+    F841

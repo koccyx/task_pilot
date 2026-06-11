@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "kaiten": {
+      "command": "python",
+      "args": [
+        "-m",
+        "chat_bot.mcp_server.server"
+      ],
+      "env": {
+        "KAITEN_API_URL": "${KAITEN_API_URL}",
+        "KAITEN_API_TOKEN": "${KAITEN_API_TOKEN}"
+      }
+    }
+  }
+}
+
