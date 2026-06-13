@@ -10,6 +10,26 @@ from pydantic import Field, ValidationError
 from .helpers import find_board_by_name, find_column_by_name
 
 
+def _normalize_column_type(column_type: Optional[str]) -> Optional[int]:
+    """Convert the MCP-friendly column type to Kaiten's numeric API value."""
+    if column_type is None:
+        return None
+    normalized = column_type.strip().lower()
+    type_map = {
+        "queue": 1,
+        "in_progress": 2,
+        "in-progress": 2,
+        "in progress": 2,
+        "done": 3,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+    }
+    if normalized not in type_map:
+        raise ValueError("column_type must be queue, in_progress, done, 1, 2, or 3")
+    return type_map[normalized]
+
+
 async def _resolve_board_id(
     client: KaitenClient,
     board_id: Optional[int],
@@ -101,7 +121,12 @@ async def _create_column(
         await ctx.report_progress(progress=50, total=100)
         ctx.debug("Preparing API request")
 
-    column_dict = column_data.model_dump(exclude={"id", "board_id"}, exclude_none=True)
+    column_dict = column_data.model_dump(
+        exclude={"id", "board_id", "column_type"}, exclude_none=True
+    )
+    normalized_type = _normalize_column_type(column_type)
+    if normalized_type is not None:
+        column_dict["type"] = normalized_type
 
     if ctx:
         await ctx.report_progress(progress=75, total=100)
@@ -141,7 +166,7 @@ async def _update_column(
             ctx.debug(f"Updating column title: {title}")
 
     if column_type is not None:
-        update_data["column_type"] = column_type
+        update_data["type"] = _normalize_column_type(column_type)
         if ctx:
             ctx.debug(f"Updating column type: {column_type}")
 

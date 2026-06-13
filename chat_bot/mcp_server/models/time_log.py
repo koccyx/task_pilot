@@ -33,8 +33,8 @@ class TimeLog(BaseModel):
     )
     role_id: int = Field(
         ...,
-        description="Identifier of the role",
-        gt=0,
+        description="Identifier of the role (-1 is the predefined Employee role)",
+        ge=-1,
     )
     time_spent: int = Field(
         ...,

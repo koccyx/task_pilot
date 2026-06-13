@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chat_bot.mcp_server.tools.manage_cards import _list_cards
+from chat_bot.mcp_server.tools.manage_cards import _list_cards, _update_card
 
 
 class TestManageCards:
@@ -39,7 +39,9 @@ class TestManageCards:
             )
 
         find_user.assert_awaited_once_with(client, "efim")
-        client.get.assert_awaited_once_with("cards?condition=1&owner_id=77&limit=50&skip=0")
+        client.get.assert_awaited_once_with(
+            "cards?condition=1&owner_id=77&limit=50&offset=0"
+        )
 
     @pytest.mark.asyncio
     async def test_list_cards_raises_when_owner_name_is_unknown(self) -> None:
@@ -68,3 +70,44 @@ class TestManageCards:
                     skip=0,
                     ctx=None,
                 )
+
+    @pytest.mark.asyncio
+    async def test_update_card_sends_due_date(self) -> None:
+        """A due-date-only update must be forwarded to Kaiten."""
+        client = MagicMock()
+        client.patch = AsyncMock(return_value={"id": 12, "title": "Task"})
+
+        await _update_card(
+            client=client,
+            card_id=12,
+            title=None,
+            board=None,
+            asap=None,
+            due_date="2026-06-14",
+            description=None,
+            ctx=None,
+        )
+
+        client.patch.assert_awaited_once_with(
+            "cards/12",
+            {"due_date": "2026-06-14"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_card_sends_false_asap_value(self) -> None:
+        """Explicit false values must not be dropped from an update."""
+        client = MagicMock()
+        client.patch = AsyncMock(return_value={"id": 12, "title": "Task"})
+
+        await _update_card(
+            client=client,
+            card_id=12,
+            title=None,
+            board=None,
+            asap=False,
+            due_date=None,
+            description=None,
+            ctx=None,
+        )
+
+        client.patch.assert_awaited_once_with("cards/12", {"asap": False})

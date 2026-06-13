@@ -585,7 +585,7 @@ async def find_tag_by_name(
     try:
         endpoint = "tags"
         if card_id:
-            endpoint = f"tags?card_id={card_id}"
+            endpoint = f"cards/{card_id}/tags"
 
         tags_response = await client.get(endpoint)
 

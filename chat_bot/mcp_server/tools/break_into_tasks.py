@@ -13,6 +13,11 @@ from .helpers import find_board_by_name, find_column_by_type
 logger = logging.getLogger(__name__)
 
 
+async def _link_child_card(client: Any, parent_id: int, child_id: int) -> None:
+    """Link an existing card as a child using Kaiten's documented endpoint."""
+    await client.post(f"cards/{parent_id}/children", {"card_id": child_id})
+
+
 @mcp.tool(
     name="break_into_tasks",
     description=(
@@ -193,10 +198,7 @@ async def break_into_tasks(
 
             # Link to parent
             try:
-                await client.post(
-                    f"cards/{subtask_id}/parents",
-                    {"parent_id": card_id},
-                )
+                await _link_child_card(client, card_id, subtask_id)
             except Exception:
                 # Parent linking might not be available in all API versions
                 logger.warning(

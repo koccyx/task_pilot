@@ -22,7 +22,7 @@ async def _list_tags(
 
     endpoint = "tags"
     if card_id:
-        endpoint = f"tags?card_id={card_id}"
+        endpoint = f"cards/{card_id}/tags"
 
     response: Union[dict, List[Dict[str, Any]]] = await client.get(endpoint)
 
@@ -108,10 +108,12 @@ async def _remove_tag(
         await ctx.report_progress(progress=50, total=100)
         ctx.debug("Sending API request")
 
-    if card_id:
-        endpoint = f"cards/{card_id}/tags/{tag_id}"
-    else:
-        endpoint = f"tags/{tag_id}"
+    if card_id is None:
+        raise ValueError(
+            "card_id is required for remove: Kaiten API only supports removing "
+            "a tag from a card"
+        )
+    endpoint = f"cards/{card_id}/tags/{tag_id}"
 
     await client.delete(endpoint)
 
@@ -135,7 +137,8 @@ async def _remove_tag(
     description=(
         "Unified tool for tag operations. "
         "Actions: list, create, remove. "
-        "Use 'list' to see tags, 'create' to add a new tag, 'remove' to delete a tag."
+        "Use 'list' to see tags, 'create' to add a new tag, "
+        "'remove' to remove a tag from a card (card_id is required)."
     ),
 )
 async def manage_tags(

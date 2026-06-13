@@ -26,7 +26,7 @@ async def _list_time_logs(
     if personal is not None:
         params.append(f"personal={str(personal).lower()}")
 
-    endpoint = f"cards/{card_id}/time_logs"
+    endpoint = f"cards/{card_id}/time-logs"
     if params:
         endpoint += "?" + "&".join(params)
 
@@ -107,7 +107,7 @@ async def _log_time(
         await ctx.report_progress(progress=75, total=100)
         ctx.info("Sending API request")
 
-    response: dict = await client.post(f"cards/{card_id}/time_logs", time_log_dict)
+    response: dict = await client.post(f"cards/{card_id}/time-logs", time_log_dict)
     log_id = response.get("id")
     hours = time_spent // 60
     minutes = time_spent % 60
@@ -261,7 +261,9 @@ async def manage_time_logs(
         None, description="Date YYYY-MM-DD (required for log, optional for list/update)"
     ),
     role_id: Optional[int] = Field(
-        None, description="Role ID (required for log, optional for update)", gt=0
+        None,
+        description="Role ID (required for log, optional for update; -1 is Employee)",
+        ge=-1,
     ),
     comment: Optional[str] = Field(None, description="Comment (for log/update)"),
     personal: Optional[bool] = Field(

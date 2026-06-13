@@ -183,7 +183,12 @@ async def _list_members(
     owner: Optional[Dict[str, Any]] = None
     if owner_id:
         try:
-            owner = await client.get(f"users/{owner_id}")
+            owners_response = await client.get(f"users?ids={owner_id}")
+            if isinstance(owners_response, list):
+                owner = owners_response[0] if owners_response else None
+            elif isinstance(owners_response, dict):
+                owners = owners_response.get("users", owners_response.get("data", []))
+                owner = owners[0] if owners else None
         except Exception:
             owner = {"id": owner_id, "name": f"User {owner_id}"}
 

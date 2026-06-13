@@ -149,6 +149,8 @@ async def _update_card(
     card_id: int,
     title: Optional[str],
     board: Optional[Union[int, str]],
+    asap: Optional[bool],
+    due_date: Optional[str],
     description: Optional[str],
     ctx: Optional[Any],
 ) -> dict:
@@ -180,6 +182,16 @@ async def _update_card(
         update_data["description"] = description
         if ctx:
             ctx.debug(f"Updating card description: {description}")
+
+    if asap is not None:
+        update_data["asap"] = asap
+        if ctx:
+            ctx.debug(f"Updating card asap: {asap}")
+
+    if due_date is not None:
+        update_data["due_date"] = due_date
+        if ctx:
+            ctx.debug(f"Updating card due_date: {due_date}")
 
     if not update_data:
         raise ValueError("At least one field must be provided for update")
@@ -295,7 +307,7 @@ async def _list_cards(
     if limit is not None:
         params["limit"] = limit
     if skip is not None:
-        params["skip"] = skip
+        params["offset"] = skip
 
     if ctx:
         await ctx.report_progress(progress=60, total=100)
@@ -459,7 +471,10 @@ async def manage_cards(
         None,
         description="Board name - automatically resolved to ID, preferred over board_id",
     ),
-    asap: bool = Field(False, description="Whether the card is urgent"),
+    asap: Optional[bool] = Field(
+        None,
+        description="Whether the card is urgent; omitted values are unchanged on update",
+    ),
     due_date: Optional[str] = Field(None, description="Due date in YYYY-MM-DD format"),
     description: Optional[str] = Field(None, description="Card description"),
     space_id: Optional[int] = Field(None, description="Space ID for filtering", gt=0),
@@ -542,7 +557,13 @@ async def manage_cards(
             # Resolve board name to board_id if needed
             resolved_board_id = await _resolve_board_id(client, board_id, board, ctx)
             return await _create_card(
-                client, title, resolved_board_id, asap, due_date, description, ctx
+                client,
+                title,
+                resolved_board_id,
+                asap if asap is not None else False,
+                due_date,
+                description,
+                ctx,
             )
 
         if action == "get":
@@ -553,7 +574,19 @@ async def manage_cards(
         if action == "update":
             if card_id is None:
                 raise ValueError("card_id is required for update action")
-            return await _update_card(client, card_id, title, board, description, ctx)
+            update_board: Optional[Union[int, str]] = (
+                board if board is not None else board_id
+            )
+            return await _update_card(
+                client,
+                card_id,
+                title,
+                update_board,
+                asap,
+                due_date,
+                description,
+                ctx,
+            )
 
         if action == "delete":
             if card_id is None:

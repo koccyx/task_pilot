@@ -10,6 +10,7 @@ The singleton is automatically cleaned up at process exit via atexit.
 import atexit
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional, cast
 
 import httpx
@@ -19,6 +20,8 @@ from chat_bot.logging_config import get_logger, log_method_call
 from chat_bot.mcp_server.config.settings import Settings
 
 logger = get_logger(__name__)
+
+MAX_RATE_LIMIT_RETRIES = 3
 
 # Module-level singleton instances for efficient reuse
 _client_instance: Optional["KaitenClient"] = None
@@ -116,11 +119,30 @@ class KaitenClient:
         )
 
         try:
-            response: Response = await self._client.request(
-                method=method,
-                url=url,
-                json=data,
-            )
+            for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+                response: Response = await self._client.request(
+                    method=method,
+                    url=url,
+                    json=data,
+                )
+                if response.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+                    break
+
+                retry_after = response.headers.get("Retry-After")
+                reset_at = response.headers.get("X-RateLimit-Reset")
+                if retry_after:
+                    delay = max(float(retry_after), 0.1)
+                elif reset_at:
+                    delay = max(float(reset_at) - time.time(), 0.1)
+                else:
+                    delay = 0.5 * (attempt + 1)
+                logger.warning(
+                    "Kaiten rate limit reached; retrying in %.2fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    MAX_RATE_LIMIT_RETRIES,
+                )
+                await asyncio.sleep(delay)
             response.raise_for_status()
 
             # Log response summary (not full body to avoid huge logs)
