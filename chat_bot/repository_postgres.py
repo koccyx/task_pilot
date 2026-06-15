@@ -76,10 +76,14 @@ class ChatRepository(BaseChatRepository):
                     telegram_display_name TEXT NOT NULL,
                     introduced_name TEXT NOT NULL,
                     kaiten_user_name TEXT,
+                    kaiten_user_id BIGINT,
                     introduced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE(chat_id, telegram_user_id)
                 );
+
+                ALTER TABLE user_profiles
+                ADD COLUMN IF NOT EXISTS kaiten_user_id BIGINT;
                 """
             )
         self._schema_ready = True
@@ -122,6 +126,7 @@ class ChatRepository(BaseChatRepository):
             telegram_display_name=record["telegram_display_name"],
             introduced_name=record["introduced_name"],
             kaiten_user_name=record["kaiten_user_name"],
+            kaiten_user_id=record["kaiten_user_id"],
             introduced_at=record["introduced_at"],
             updated_at=record["updated_at"],
         )
@@ -257,6 +262,7 @@ class ChatRepository(BaseChatRepository):
                 """
                 SELECT chat_id, telegram_user_id, telegram_username,
                        telegram_display_name, introduced_name, kaiten_user_name,
+                       kaiten_user_id,
                        introduced_at, updated_at
                 FROM user_profiles
                 WHERE chat_id = $1 AND telegram_user_id = $2
@@ -276,17 +282,19 @@ class ChatRepository(BaseChatRepository):
                 INSERT INTO user_profiles (
                     chat_id, telegram_user_id, telegram_username,
                     telegram_display_name, introduced_name, kaiten_user_name,
-                    introduced_at, updated_at
+                    kaiten_user_id, introduced_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                 ON CONFLICT (chat_id, telegram_user_id) DO UPDATE SET
                     telegram_username = EXCLUDED.telegram_username,
                     telegram_display_name = EXCLUDED.telegram_display_name,
                     introduced_name = EXCLUDED.introduced_name,
                     kaiten_user_name = EXCLUDED.kaiten_user_name,
+                    kaiten_user_id = EXCLUDED.kaiten_user_id,
                     updated_at = NOW()
                 RETURNING chat_id, telegram_user_id, telegram_username,
                           telegram_display_name, introduced_name, kaiten_user_name,
+                          kaiten_user_id,
                           introduced_at, updated_at
                 """,
                 profile.chat_id,
@@ -295,11 +303,29 @@ class ChatRepository(BaseChatRepository):
                 profile.telegram_display_name,
                 profile.introduced_name,
                 profile.kaiten_user_name,
+                profile.kaiten_user_id,
             )
 
         if row is None:
             raise RuntimeError("Failed to upsert user profile")
         return self._profile_from_record(row)
+
+    async def list_user_profiles(self, chat_id: int) -> List[UserProfile]:
+        """List all known users so every worker can resolve people consistently."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT chat_id, telegram_user_id, telegram_username,
+                       telegram_display_name, introduced_name, kaiten_user_name,
+                       kaiten_user_id, introduced_at, updated_at
+                FROM user_profiles
+                WHERE chat_id = $1
+                ORDER BY introduced_name ASC, telegram_user_id ASC
+                """,
+                chat_id,
+            )
+        return [self._profile_from_record(row) for row in rows]
 
     async def close(self) -> None:
         """Close the connection pool."""

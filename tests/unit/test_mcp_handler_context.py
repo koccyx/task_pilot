@@ -1,8 +1,7 @@
 """Tests for MCP chat context loading."""
 
-import os
+import time
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import patch
 
 import pytest
 
@@ -30,73 +29,52 @@ class TestMCPHandlerContext:
     """Tests for merged chat context."""
 
     @pytest.mark.asyncio
-    async def test_load_chat_context_keeps_chain_and_fills_from_recent(self) -> None:
-        """Reply chain should be kept in full and filled with the latest recent messages."""
+    async def test_load_chat_context_returns_last_ten_messages(self) -> None:
         assistant = MagicMock()
         handler = MCPHandler(assistant=assistant)
         repository = MagicMock()
 
         recent_messages = [
-            make_message(1, "2025-01-01T10:00:00", "first"),
-            make_message(2, "2025-01-01T10:01:00", "second"),
-            make_message(3, "2025-01-01T10:02:00", "third"),
-            make_message(4, "2025-01-01T10:03:00", "fourth"),
-            make_message(5, "2025-01-01T10:04:00", "current"),
+            make_message(
+                index,
+                f"2025-01-01T10:{index:02d}:00",
+                f"message {index}",
+            )
+            for index in range(1, 13)
         ]
-        reply_chain = [
-            make_message(1, "2025-01-01T10:00:00", "first"),
-            make_message(10, "2025-01-01T09:58:00", "reply root"),
-            make_message(11, "2025-01-01T09:59:00", "reply child"),
-        ]
-
         repository.read_recent_messages = AsyncMock(
             return_value=MagicMock(messages=recent_messages)
         )
-        repository.get_conversation_chain = AsyncMock(return_value=reply_chain)
 
-        with patch.dict(os.environ, {"CHAT_CONTEXT_MESSAGE_LIMIT": "4"}):
-            context = await handler._load_chat_context(
-                repository=repository,
-                chat_id=123,
-                current_message_id=5,
-                is_reply=True,
-                reply_to_message_id=11,
-            )
+        context = await handler._load_chat_context(
+            repository=repository,
+            chat_id=123,
+            current_message_id=12,
+            is_reply=True,
+            reply_to_message_id=11,
+        )
 
         assert context is not None
-        assert [msg.message_id for msg in context] == [10, 11, 1, 4]
+        assert [msg.message_id for msg in context] == list(range(2, 12))
+        repository.read_recent_messages.assert_awaited_once_with(chat_id=123, limit=10)
+        repository.get_conversation_chain.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_load_chat_context_without_reply_returns_last_recent_messages(self) -> None:
-        """Without a reply, context should be the last N recent messages only."""
+    async def test_load_chat_context_returns_none_on_repository_error(self) -> None:
         assistant = MagicMock()
         handler = MCPHandler(assistant=assistant)
         repository = MagicMock()
+        repository.read_recent_messages = AsyncMock(side_effect=RuntimeError("db down"))
 
-        recent_messages = [
-            make_message(1, "2025-01-01T10:00:00", "first"),
-            make_message(2, "2025-01-01T10:01:00", "second"),
-            make_message(3, "2025-01-01T10:02:00", "third"),
-            make_message(4, "2025-01-01T10:03:00", "fourth"),
-            make_message(5, "2025-01-01T10:04:00", "current"),
-        ]
-
-        repository.read_recent_messages = AsyncMock(
-            return_value=MagicMock(messages=recent_messages)
+        context = await handler._load_chat_context(
+            repository=repository,
+            chat_id=123,
+            current_message_id=5,
+            is_reply=False,
+            reply_to_message_id=None,
         )
-        repository.get_conversation_chain = AsyncMock(return_value=[])
 
-        with patch.dict(os.environ, {"CHAT_CONTEXT_MESSAGE_LIMIT": "3"}):
-            context = await handler._load_chat_context(
-                repository=repository,
-                chat_id=123,
-                current_message_id=5,
-                is_reply=False,
-                reply_to_message_id=None,
-            )
-
-        assert context is not None
-        assert [msg.message_id for msg in context] == [2, 3, 4]
+        assert context is None
 
     def test_deduplicate_messages_preserves_order_and_excludes_current(self) -> None:
         """Deduplication should keep chronological order and drop current message."""
@@ -111,3 +89,30 @@ class TestMCPHandlerContext:
 
         assert [msg.message_id for msg in result] == [1, 2]
         assert result[1].text == "second updated"
+
+    @pytest.mark.asyncio
+    async def test_handle_uses_simple_task_agent_and_ten_message_context(self) -> None:
+        assistant = MagicMock()
+        handler = MCPHandler(assistant=assistant)
+        handler._initialized = True
+        handler._tools = [MagicMock(name="manage_cards")]
+        handler._tools_cached_at = time.time()
+        handler.task_agent.run = AsyncMock(return_value="Готово")
+        repository = MagicMock()
+        repository.get_user_profile = AsyncMock(return_value=None)
+        repository.list_user_profiles = AsyncMock(return_value=[])
+        repository.read_recent_messages = AsyncMock(return_value=MagicMock(messages=[]))
+
+        result = await handler.handle(
+            text="создай задачи по диалогу",
+            chat_id=123,
+            user_id=456,
+            repository=repository,
+        )
+
+        assert result == "Готово"
+        handler.task_agent.run.assert_awaited_once()
+        repository.read_recent_messages.assert_awaited_once_with(
+            chat_id=123,
+            limit=10,
+        )

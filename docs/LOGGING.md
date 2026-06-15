@@ -4,6 +4,25 @@
 
 ## Что логируется
 
+### Трассировка простого task-агента
+
+Каждый запрос на работу с задачами получает поле `agent_run_id`. По нему можно
+собрать трассу одного запуска:
+
+```logql
+{service="task_pilot-mcp-server"} | json | agent_run_id="RUN_ID"
+```
+
+Основные события в поле `event_type`:
+
+- `simple_task_agent_started`
+- `simple_task_agent_step`
+- `simple_task_agent_completed`
+- `simple_task_agent_failed`
+
+События содержат доступные task-инструменты, вызовы инструментов, длительность и
+санитизированный финальный ответ.
+
 ### 1. Входные параметры и вызываемый метод
 
 Каждый вызов метода логируется с:
@@ -325,4 +344,3 @@ logger.info(
 - [Документация Loki](https://grafana.com/docs/loki/latest/)
 - [Документация Grafana](https://grafana.com/docs/grafana/latest/)
 - [LogQL Query Language](https://grafana.com/docs/loki/latest/logql/)
-

@@ -1,6 +1,6 @@
 # task_pilot
 
-Упрощённый проект: один Telegram-агент, который работает только с Kaiten через MCP.
+Простой Telegram-агент для создания и обновления задач в Kaiten через MCP.
 История чатов и профили пользователей теперь хранятся в `PostgreSQL`.
 
 В проекте осталось:
@@ -15,8 +15,8 @@
    - `TELEGRAM_BOT_USERNAME`
    - `AI_API_KEY`
    - `AI_MODEL`
-    - `KAITEN_API_URL`
-    - `KAITEN_API_TOKEN`
+   - `KAITEN_API_URL`
+   - `KAITEN_API_TOKEN`
    - при необходимости поменяйте `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 
 2. Установите зависимости:
@@ -52,13 +52,18 @@ docker compose up --build
 Перед первой нормальной работой пользователь должен представиться:
 
 ```text
-/introduce name="Имя Фамилия" kaiten="Имя в Kaiten"
+/introduce name="Имя Фамилия" kaiten="Имя в Kaiten" kaiten_id=123
 ```
 
-Параметр `kaiten` необязателен.
+Параметры `kaiten` и `kaiten_id` необязательны, но без них агент не будет
+угадывать соответствие пользователя в Kaiten.
 
 ## Архитектура
 
 ```text
-Telegram -> chat_bot.bot -> MessageRouter -> MCPHandler -> Assistant -> Kaiten MCP tools
+Telegram -> MessageRouter -> MCPHandler -> SimpleTaskAgent -> Kaiten task tools
 ```
+
+Агент получает последние 10 сообщений диалога и текущий запрос. Он может создавать
+карточки, формировать описания из контекста, назначать исполнителей и перемещать
+карточки в указанную колонку. Агенту доступны только task-инструменты Kaiten.

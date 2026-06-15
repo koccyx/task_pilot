@@ -176,6 +176,9 @@ class CommandHandler:
             kaiten_user_name=(
                 str(args["kaiten"]) if "kaiten" in args else None
             ),
+            kaiten_user_id=(
+                int(args["kaiten_id"]) if "kaiten_id" in args else None
+            ),
         )
         saved = await self.repository.upsert_user_profile(profile)
 
@@ -184,6 +187,8 @@ class CommandHandler:
             if saved.kaiten_user_name
             else ""
         )
+        if saved.kaiten_user_id:
+            kaiten_hint += f" (ID: {saved.kaiten_user_id})"
         return (
             "✅ Профиль сохранён.\n"
             f"Буду помнить вас как: {saved.introduced_name}{kaiten_hint}"

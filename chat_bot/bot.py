@@ -156,8 +156,9 @@ class ChatLoggerBot:
 
         await message.reply_text(
             "Чтобы пользоваться ботом, сначала представьтесь.\n"
-            'Отправьте команду: /introduce name="Имя Фамилия" kaiten="Имя в Kaiten"\n'
-            'Параметр `kaiten` необязателен, если имя в Kaiten совпадает.'
+            'Отправьте команду: /introduce name="Имя Фамилия" '
+            'kaiten="Имя в Kaiten" kaiten_id=123\n'
+            "Параметры `kaiten` и `kaiten_id` необязательны."
         )
         return None
 
@@ -417,8 +418,8 @@ class ChatLoggerBot:
         if update.message:
             await update.message.reply_text(
                 "Привет. Перед началом работы представьтесь командой:\n"
-                '/introduce name="Имя Фамилия" kaiten="Имя в Kaiten"\n'
-                "Параметр kaiten можно пропустить, если имя совпадает."
+                '/introduce name="Имя Фамилия" kaiten="Имя в Kaiten" kaiten_id=123\n'
+                "Параметры kaiten и kaiten_id можно пропустить."
             )
 
     async def handle_callback_query(

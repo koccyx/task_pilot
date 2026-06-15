@@ -19,6 +19,9 @@ class UserProfile(BaseModel):
     kaiten_user_name: Optional[str] = Field(
         None, description="Optional Kaiten display name or username"
     )
+    kaiten_user_id: Optional[int] = Field(
+        None, description="Optional stable Kaiten user ID"
+    )
     introduced_at: Optional[datetime] = Field(
         None, description="When the user introduced themselves"
     )
@@ -31,6 +34,14 @@ class UserProfile(BaseModel):
     def validate_positive_ids(cls, v: int) -> int:
         """Validate positive identifiers."""
         if v <= 0:
+            raise ValueError("identifier must be positive")
+        return v
+
+    @classmethod
+    @validator("kaiten_user_id")
+    def validate_optional_positive_id(cls, v: Optional[int]) -> Optional[int]:
+        """Validate the optional Kaiten identifier."""
+        if v is not None and v <= 0:
             raise ValueError("identifier must be positive")
         return v
 

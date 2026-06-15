@@ -28,6 +28,9 @@ def mock_repository() -> MagicMock:
     repo.save_message = AsyncMock()
     repo.read_recent_messages = AsyncMock(return_value=MessagesData(messages=[]))
     repo.get_conversation_chain = AsyncMock(return_value=[])
+    repo.get_user_profile = AsyncMock(return_value=None)
+    repo.list_user_profiles = AsyncMock(return_value=[])
+    repo.upsert_user_profile = AsyncMock()
     return repo
 
 

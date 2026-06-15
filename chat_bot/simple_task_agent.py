@@ -1,0 +1,214 @@
+"""A small single-agent flow for creating and updating Kaiten tasks."""
+
+from __future__ import annotations
+
+import os
+import time
+from datetime import datetime
+from typing import Annotated, Any, List, Optional, TypedDict
+from uuid import uuid4
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+
+from .logging_config import get_logger, sanitize_for_logging
+from .models import Message, UserProfile
+
+logger = get_logger(__name__)
+
+TASK_TOOL_NAMES = {
+    "manage_cards",
+    "manage_members",
+    "move_card",
+    "manage_comments",
+}
+
+
+class TaskAgentState(TypedDict, total=False):
+    messages: Annotated[List[BaseMessage], add_messages]
+    final_response: str
+
+
+class SimpleTaskAgent:
+    """One ReAct agent with only task-related Kaiten tools."""
+
+    def __init__(self, llm: Any) -> None:
+        self.llm = llm
+
+    async def run(
+        self,
+        message: str,
+        tools: List[Any],
+        history: Optional[List[Message]] = None,
+        user_profiles: Optional[List[UserProfile]] = None,
+    ) -> str:
+        """Use the last ten messages to create or update Kaiten tasks."""
+        run_id = uuid4().hex
+        started_at = time.perf_counter()
+        history = (history or [])[-10:]
+        user_profiles = user_profiles or []
+        selected_tools = [
+            tool for tool in tools if getattr(tool, "name", None) in TASK_TOOL_NAMES
+        ]
+        logger.info(
+            "Simple task agent started",
+            extra={
+                "event_type": "simple_task_agent_started",
+                "agent_run_id": run_id,
+                "history_message_count": len(history),
+                "tool_names": [
+                    getattr(tool, "name", str(tool)) for tool in selected_tools
+                ],
+                "user_message": sanitize_for_logging(message, max_length=1000),
+            },
+        )
+
+        if not selected_tools:
+            return "Инструменты для работы с задачами не настроены."
+
+        graph = self._build_graph(
+            tools=selected_tools,
+            system_prompt=self._system_prompt(user_profiles),
+            run_id=run_id,
+        )
+        input_messages = self._history_messages(history)
+        input_messages.append(HumanMessage(content=f"Текущий запрос: {message}"))
+        try:
+            result = await graph.ainvoke(
+                {"messages": input_messages, "final_response": ""},
+                config={
+                    "recursion_limit": int(
+                        os.getenv("SIMPLE_TASK_AGENT_RECURSION_LIMIT", "30")
+                    )
+                },
+            )
+            response = result.get("final_response", "") or self._last_ai_content(
+                result.get("messages", [])
+            )
+            logger.info(
+                "Simple task agent completed",
+                extra={
+                    "event_type": "simple_task_agent_completed",
+                    "agent_run_id": run_id,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "final_response": sanitize_for_logging(response, max_length=2000),
+                },
+            )
+            return response or "Не удалось получить результат."
+        except Exception as exc:
+            logger.error(
+                "Simple task agent failed: %s",
+                exc,
+                exc_info=True,
+                extra={
+                    "event_type": "simple_task_agent_failed",
+                    "agent_run_id": run_id,
+                    "error_type": type(exc).__name__,
+                    "error_message": sanitize_for_logging(str(exc), max_length=1000),
+                },
+            )
+            return f"Ошибка при работе с задачами: {exc}"
+
+    def _build_graph(self, tools: List[Any], system_prompt: str, run_id: str) -> Any:
+        graph = StateGraph(TaskAgentState)
+        tool_node = ToolNode(tools=tools, handle_tool_errors=True)
+
+        async def agent_step(state: TaskAgentState) -> TaskAgentState:
+            response = await self.llm.bind_tools(tools).ainvoke(
+                [SystemMessage(content=system_prompt)] + state["messages"]
+            )
+            logger.info(
+                "Simple task agent step",
+                extra={
+                    "event_type": "simple_task_agent_step",
+                    "agent_run_id": run_id,
+                    "tool_calls": sanitize_for_logging(
+                        getattr(response, "tool_calls", []) or [], max_length=3000
+                    ),
+                    "content": sanitize_for_logging(
+                        getattr(response, "content", ""), max_length=2000
+                    ),
+                },
+            )
+            return {"messages": [response]}
+
+        def after_agent(state: TaskAgentState) -> str:
+            last = state["messages"][-1]
+            if isinstance(last, AIMessage) and getattr(last, "tool_calls", []):
+                return "tools"
+            return "finalize"
+
+        def finalize(state: TaskAgentState) -> TaskAgentState:
+            return {"final_response": self._last_ai_content(state["messages"])}
+
+        graph.add_node("agent", agent_step)
+        graph.add_node("tools", tool_node)
+        graph.add_node("finalize", finalize)
+        graph.add_edge(START, "agent")
+        graph.add_conditional_edges(
+            "agent", after_agent, {"tools": "tools", "finalize": "finalize"}
+        )
+        graph.add_edge("tools", "agent")
+        graph.add_edge("finalize", END)
+        return graph.compile()
+
+    @staticmethod
+    def _history_messages(history: List[Message]) -> List[BaseMessage]:
+        messages: List[BaseMessage] = []
+        for item in history:
+            if not item.text:
+                continue
+            content = f"[{item.message_id}] {item.sender_name}: {item.text}"
+            if item.is_bot_message:
+                messages.append(AIMessage(content=content))
+            else:
+                messages.append(HumanMessage(content=content))
+        return messages
+
+    @staticmethod
+    def _last_ai_content(messages: List[BaseMessage]) -> str:
+        for message in reversed(messages):
+            if isinstance(message, AIMessage):
+                content = getattr(message, "content", "")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+        return ""
+
+    @staticmethod
+    def _system_prompt(user_profiles: List[UserProfile]) -> str:
+        users = []
+        for profile in user_profiles:
+            users.append(
+                f"- Telegram: {profile.telegram_username or profile.introduced_name}; "
+                f"Kaiten: {profile.kaiten_user_name or profile.introduced_name}; "
+                f"Kaiten ID: {profile.kaiten_user_id or 'не указан'}"
+            )
+        user_directory = "\n".join(users) or "- соответствия пользователей отсутствуют"
+        return f"""
+Ты простой агент для работы только с задачами Kaiten.
+
+Тебе передаются последние 10 сообщений диалога и текущий запрос.
+Используй их как единый контекст и выполняй запрос до конца.
+
+Правила:
+- Создавай и обновляй карточки, пиши им содержательные описания из контекста диалога.
+- Запросы вроде "поставь задачки по диалогу" означают: найди в сообщениях намерения,
+  договорённости и поручения, затем создай отдельную карточку для каждого пункта.
+- Фразы "я хочу ..." являются задачами; автор сообщения является исполнителем.
+- Для создания карточки обязательны только название и доска.
+- Описание формируй самостоятельно из сообщения и связанного контекста.
+- Колонка, срок и исполнитель необязательны. Не спрашивай их, если пользователь
+  явно не потребовал конкретное значение.
+- Если доска не указана и её нельзя восстановить из диалога, спроси только доску.
+- При создании в колонке сначала создай карточку, затем перемести её через move_card.
+- Для назначения ответственного сначала создай карточку, затем используй manage_members.
+- Не выдумывай доску, пользователя, срок или результат инструмента.
+- В финальном ответе дай только обычный краткий итог без внутренних статусов.
+
+Каталог пользователей:
+{user_directory}
+
+Текущая дата: {datetime.now().date().isoformat()}
+""".strip()

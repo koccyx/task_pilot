@@ -17,6 +17,7 @@ from ..assistant import Assistant
 from ..mcp_server.client.mcp_client import KaitenMCPClient, MCPClientConfig
 from ..models import Message, UserProfile
 from ..repository_base import BaseChatRepository
+from ..simple_task_agent import SimpleTaskAgent
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class MCPHandler:
             mcp_config: MCP client configuration (uses defaults if not provided).
         """
         self.assistant = assistant
+        self.task_agent = SimpleTaskAgent(llm=assistant.llm)
 
         # Read configuration from environment if not provided
         if mcp_config is None:
@@ -110,7 +112,10 @@ class MCPHandler:
         now = time.time()
 
         # Check if cache expired
-        if self._tools_cached_at is None or now - self._tools_cached_at > _TOOLS_CACHE_TTL:
+        if (
+            self._tools_cached_at is None
+            or now - self._tools_cached_at > _TOOLS_CACHE_TTL
+        ):
             logger.info(
                 "Tool cache expired (TTL=%.0fs), refreshing...",
                 _TOOLS_CACHE_TTL,
@@ -120,9 +125,7 @@ class MCPHandler:
                 self._tools_cached_at = now
                 logger.info(f"Tool cache refreshed: {len(self._tools)} tools")
             except Exception as e:
-                logger.warning(
-                    f"Failed to refresh tool cache: {e}. Using stale cache."
-                )
+                logger.warning(f"Failed to refresh tool cache: {e}. Using stale cache.")
                 # Keep using stale cache rather than failing
 
     async def handle(
@@ -175,11 +178,18 @@ class MCPHandler:
         # Get conversation history if this is a reply
         history: Optional[List[Message]] = None
         user_profile: Optional[UserProfile] = None
+        user_profiles: List[UserProfile] = []
         if repository:
             try:
                 user_profile = await repository.get_user_profile(chat_id, user_id)
             except Exception as e:
                 logger.warning(f"Failed to load user profile: {e}")
+            try:
+                user_profiles = await repository.list_user_profiles(chat_id)
+            except Exception as e:
+                logger.warning(f"Failed to load chat user directory: {e}")
+            if user_profile is not None and not user_profiles:
+                user_profiles = [user_profile]
 
         if repository:
             history = await self._load_chat_context(
@@ -188,6 +198,7 @@ class MCPHandler:
                 current_message_id=current_message_id,
                 is_reply=is_reply,
                 reply_to_message_id=reply_to_message_id,
+                current_text=text,
             )
 
         logger.info(
@@ -198,12 +209,11 @@ class MCPHandler:
         )
 
         try:
-            # Use Assistant's chat_with_tools with MCP tools
-            response = await self.assistant.chat_with_tools(
+            response = await self.task_agent.run(
                 message=text,
                 tools=self._tools,
                 history=history,
-                user_profile=user_profile,
+                user_profiles=user_profiles,
             )
             return response
 
@@ -218,77 +228,23 @@ class MCPHandler:
         current_message_id: Optional[int],
         is_reply: bool,
         reply_to_message_id: Optional[int],
+        current_text: Optional[str] = None,
     ) -> Optional[List[Message]]:
-        """Load recent chat context and merge it with reply-chain history."""
-        context_limit = int(os.getenv("CHAT_CONTEXT_MESSAGE_LIMIT", "12"))
-        recent_messages: List[Message] = []
-        reply_chain: List[Message] = []
-
+        """Load exactly the last ten messages before the current message."""
         try:
             recent_batch = await repository.read_recent_messages(
                 chat_id=chat_id,
-                limit=context_limit,
+                limit=10,
             )
-            recent_messages = recent_batch.messages
-            logger.info(
-                "Loaded recent chat context: %d messages",
-                len(recent_messages),
-            )
+            context = self._deduplicate_messages(
+                recent_batch.messages,
+                current_message_id=current_message_id,
+            )[-10:]
+            logger.info("Loaded simple task context: %d messages", len(context))
+            return context or None
         except Exception as e:
             logger.warning(f"Failed to load recent chat context: {e}")
-
-        if is_reply and reply_to_message_id:
-            try:
-                reply_chain = await repository.get_conversation_chain(
-                    chat_id=chat_id,
-                    message_id=reply_to_message_id,
-                )
-                logger.info(
-                    "Loaded reply conversation chain: %d messages",
-                    len(reply_chain),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to load conversation history: {e}")
-
-        deduplicated_recent = self._deduplicate_messages(
-            recent_messages,
-            current_message_id=current_message_id,
-        )
-        deduplicated_chain = self._deduplicate_messages(
-            reply_chain,
-            current_message_id=current_message_id,
-        )
-
-        if deduplicated_chain:
-            chain_ids = {msg.message_id for msg in deduplicated_chain}
-            remaining_slots = max(0, context_limit - len(deduplicated_chain))
-            extra_recent = [
-                msg for msg in deduplicated_recent if msg.message_id not in chain_ids
-            ]
-            if remaining_slots:
-                extra_recent = extra_recent[-remaining_slots:]
-            else:
-                extra_recent = []
-
-            final_context = self._deduplicate_messages(
-                deduplicated_chain + extra_recent,
-                current_message_id=current_message_id,
-            )
-            logger.info(
-                "Prepared reply-aware chat context: chain=%d extra_recent=%d total=%d",
-                len(deduplicated_chain),
-                len(extra_recent),
-                len(final_context),
-            )
-            return final_context or None
-
-        final_context = deduplicated_recent[-context_limit:] if context_limit > 0 else []
-
-        logger.info(
-            "Prepared recent chat context: %d messages",
-            len(final_context),
-        )
-        return final_context or None
+            return None
 
     @staticmethod
     def _deduplicate_messages(

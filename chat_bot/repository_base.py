@@ -99,3 +99,7 @@ class BaseChatRepository(ABC):
         Create or update a user profile.
         """
         raise NotImplementedError
+
+    async def list_user_profiles(self, chat_id: int) -> List[UserProfile]:
+        """List all known Telegram/Kaiten identity mappings in a chat."""
+        return []
