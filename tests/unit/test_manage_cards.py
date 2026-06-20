@@ -4,11 +4,37 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chat_bot.mcp_server.tools.manage_cards import _list_cards, _update_card
+from chat_bot.mcp_server.tools.manage_cards import (
+    _list_cards,
+    _resolve_board_id,
+    _update_card,
+)
 
 
 class TestManageCards:
     """Unit tests for card listing filters."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_default_board_in_default_space(self) -> None:
+        """Default task board should be resolved inside the jmlc space."""
+        client = MagicMock()
+        client.get = AsyncMock(
+            side_effect=[
+                {"spaces": [{"id": 10, "title": "jmlc"}]},
+                {"boards": [{"id": 20, "title": "Основная доска"}]},
+            ]
+        )
+
+        board_id = await _resolve_board_id(
+            client=client,
+            board_id=None,
+            board="Основная доска",
+            ctx=None,
+        )
+
+        assert board_id == 20
+        client.get.assert_any_await("spaces")
+        client.get.assert_any_await("spaces/10/boards")
 
     @pytest.mark.asyncio
     async def test_list_cards_resolves_owner_name_to_owner_id(self) -> None:

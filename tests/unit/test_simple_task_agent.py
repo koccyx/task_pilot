@@ -133,7 +133,10 @@ class TestSimpleTaskAgent:
         assert "обязательны только название и доска" in prompt
         assert "Описания формируй самостоятельно" not in prompt
         assert "Описание формируй самостоятельно" in prompt
-        assert "спроси только доску" in prompt
+        assert "Основная доска" in prompt
+        assert "jmlc" in prompt
+        assert "Не спрашивай доску для новых задач" in prompt
+        assert "Если пользователь явно указал другую доску" in prompt
 
     def test_system_prompt_explains_how_to_list_tasks_by_assignee(self) -> None:
         current_user = UserProfile(

@@ -8,9 +8,44 @@ from chat_bot.mcp_server.mcp_instance import mcp
 from chat_bot.mcp_server.models.card import Card
 from pydantic import Field, ValidationError
 
-from .helpers import find_board_by_name, find_user_by_name
+from .helpers import find_board_by_name, find_space_by_name, find_user_by_name
 
 logger = get_logger(__name__)
+
+DEFAULT_TASK_SPACE_NAME = "jmlc"
+DEFAULT_TASK_BOARD_NAME = "основная доска"
+
+
+async def _find_board_in_space(
+    client: KaitenClient,
+    space_name: str,
+    board_name: str,
+) -> Optional[int]:
+    """Find a board by name inside a concrete space."""
+    space_id = await find_space_by_name(client, space_name)
+    if space_id is None:
+        return None
+
+    boards_response = await client.get(f"spaces/{space_id}/boards")
+    if isinstance(boards_response, list):
+        boards = boards_response
+    elif isinstance(boards_response, dict) and "boards" in boards_response:
+        boards = boards_response["boards"]
+    elif isinstance(boards_response, dict) and "data" in boards_response:
+        boards = boards_response["data"]
+    else:
+        boards = [boards_response] if boards_response else []
+
+    board_name_lower = board_name.lower()
+    for board_record in boards:
+        if not isinstance(board_record, dict):
+            continue
+        for field in ("title", "name"):
+            value = board_record.get(field)
+            if isinstance(value, str) and value.lower() == board_name_lower:
+                board_id = board_record.get("id")
+                return board_id if isinstance(board_id, int) else None
+    return None
 
 
 @log_method_call(log_input=True, log_output=True, log_errors=True)
@@ -25,8 +60,22 @@ async def _resolve_board_id(
     if board is not None:
         if ctx:
             ctx.debug(f"Resolving board name: {board}")
-        with log_intermediate_call(logger, "find_board_by_name", board_name=board):
-            found_id = await find_board_by_name(client, board)
+        board_name = board.strip()
+        if board_name.lower() == DEFAULT_TASK_BOARD_NAME:
+            with log_intermediate_call(
+                logger,
+                "_find_board_in_space",
+                space_name=DEFAULT_TASK_SPACE_NAME,
+                board_name=board,
+            ):
+                found_id = await _find_board_in_space(
+                    client,
+                    DEFAULT_TASK_SPACE_NAME,
+                    board,
+                )
+        else:
+            with log_intermediate_call(logger, "find_board_by_name", board_name=board):
+                found_id = await find_board_by_name(client, board)
         if found_id is None:
             error_msg = f"Board not found: {board}"
             logger.error(
@@ -71,7 +120,9 @@ async def _create_card(
         ctx.debug("Validating card data")
 
     try:
-        with log_intermediate_call(logger, "Card.__init__", title=title, board_id=board_id):
+        with log_intermediate_call(
+            logger, "Card.__init__", title=title, board_id=board_id
+        ):
             card_data = Card(
                 title=title,
                 board_id=board_id,

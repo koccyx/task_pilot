@@ -15,9 +15,13 @@ from openpyxl.utils import get_column_letter
 
 from chat_bot.logging_config import get_logger
 from chat_bot.mcp_server.client.kaiten_client import KaitenClient, get_kaiten_client
+from chat_bot.mcp_server.tools.helpers import find_space_by_name
 from chat_bot.models import RouteResult
 
 logger = get_logger(__name__)
+
+DEFAULT_REPORT_SPACE_NAME = "jmlc"
+DEFAULT_REPORT_BOARD_NAME = "основная доска"
 
 
 @dataclass(frozen=True)
@@ -78,8 +82,16 @@ class WorkloadReportService:
 
     async def generate(self) -> RouteResult:
         """Fetch Kaiten data and return a ready-to-send Excel report."""
-        users = await self._fetch_all("users")
-        cards = await self._fetch_all("cards", {"condition": 1})
+        space_id, board_id = await self._resolve_default_scope()
+        users = await self._fetch_all(f"spaces/{space_id}/users")
+        cards = await self._fetch_all(
+            "cards",
+            {
+                "condition": 1,
+                "space_id": space_id,
+                "board_id": board_id,
+            },
+        )
 
         user_by_id = {
             user.get("id"): user
@@ -88,17 +100,59 @@ class WorkloadReportService:
         }
         rows, details, problems = self._build_rows(cards, user_by_id)
 
-        output_path = self._write_workbook(rows, details, problems)
+        scope_label = (
+            f"Пространство: {DEFAULT_REPORT_SPACE_NAME}; "
+            f"доска: {DEFAULT_REPORT_BOARD_NAME}"
+        )
+        output_path = self._write_workbook(rows, details, problems, scope_label)
         text = (
             "Готово. Собрал Excel-отчет по загруженности команды: "
             f"{len(rows)} исполнителей, {len(details)} активных назначений, "
-            f"{len(problems)} проблемных карточек."
+            f"{len(problems)} проблемных карточек. "
+            f"Скоуп: {DEFAULT_REPORT_SPACE_NAME} / {DEFAULT_REPORT_BOARD_NAME}."
         )
         return RouteResult(
             text=text,
             document_path=output_path,
             document_filename=output_path.name,
         )
+
+    async def _resolve_default_scope(self) -> tuple[int, int]:
+        """Resolve the default Kaiten space and board for workload reports."""
+        space_id = await find_space_by_name(self.client, DEFAULT_REPORT_SPACE_NAME)
+        if space_id is None:
+            raise ValueError(f"Пространство не найдено: {DEFAULT_REPORT_SPACE_NAME}")
+
+        board_id = await self._find_board_id_in_space(
+            space_id=space_id,
+            board_name=DEFAULT_REPORT_BOARD_NAME,
+        )
+        if board_id is None:
+            raise ValueError(
+                "Доска не найдена в пространстве "
+                f"{DEFAULT_REPORT_SPACE_NAME}: {DEFAULT_REPORT_BOARD_NAME}"
+            )
+
+        return space_id, board_id
+
+    async def _find_board_id_in_space(
+        self,
+        space_id: int,
+        board_name: str,
+    ) -> Optional[int]:
+        """Find a board by name inside one Kaiten space."""
+        response = await self.client.get(f"spaces/{space_id}/boards")
+        boards = self._extract_collection(response, "boards")
+        board_name_lower = board_name.lower()
+
+        for board in boards:
+            for field in ("title", "name"):
+                value = board.get(field)
+                if isinstance(value, str) and value.lower() == board_name_lower:
+                    board_id = board.get("id")
+                    return board_id if isinstance(board_id, int) else None
+
+        return None
 
     async def _fetch_all(
         self,
@@ -400,6 +454,7 @@ class WorkloadReportService:
         rows: list[WorkloadRow],
         details: list[dict[str, Any]],
         problems: list[dict[str, Any]],
+        scope_label: str,
     ) -> Path:
         workbook = Workbook()
         summary = workbook.active
@@ -408,9 +463,9 @@ class WorkloadReportService:
         problems_sheet = workbook.create_sheet("Проблемные карточки")
         details_sheet = workbook.create_sheet("Карточки")
 
-        self._fill_summary(summary, rows)
-        self._fill_recommendations(recommendations_sheet, rows)
-        self._fill_problems(problems_sheet, problems)
+        self._fill_summary(summary, rows, scope_label)
+        self._fill_recommendations(recommendations_sheet, rows, scope_label)
+        self._fill_problems(problems_sheet, problems, scope_label)
         self._fill_details(details_sheet, details)
 
         output_dir = Path(tempfile.gettempdir()) / "kaiten_workload_reports"
@@ -420,7 +475,12 @@ class WorkloadReportService:
         workbook.save(output_path)
         return output_path
 
-    def _fill_summary(self, sheet: Any, rows: list[WorkloadRow]) -> None:
+    def _fill_summary(
+        self,
+        sheet: Any,
+        rows: list[WorkloadRow],
+        scope_label: str,
+    ) -> None:
         headers = [
             "Исполнитель",
             "Email",
@@ -435,6 +495,7 @@ class WorkloadReportService:
         ]
         sheet.append(["Отчет по загруженности команды"])
         sheet.append([f"Сформирован: {datetime.now().strftime('%Y-%m-%d %H:%M')}"])
+        sheet.append([scope_label])
         sheet.append([])
         sheet.append(headers)
 
@@ -454,12 +515,18 @@ class WorkloadReportService:
                 ]
             )
 
-        self._style_sheet(sheet, header_row=4)
-        sheet.freeze_panes = "A5"
+        self._style_sheet(sheet, header_row=5)
+        sheet.freeze_panes = "A6"
 
-    def _fill_recommendations(self, sheet: Any, rows: list[WorkloadRow]) -> None:
+    def _fill_recommendations(
+        self,
+        sheet: Any,
+        rows: list[WorkloadRow],
+        scope_label: str,
+    ) -> None:
         sheet.append(["Рекомендации по распределению задач"])
         sheet.append([f"Сформирован: {datetime.now().strftime('%Y-%m-%d %H:%M')}"])
+        sheet.append([scope_label])
         sheet.append([])
         sheet.append(["Категория", "Исполнитель", "Индекс", "Риск", "Комментарий"])
 
@@ -512,13 +579,18 @@ class WorkloadReportService:
                 ]
             )
 
-        if sheet.max_row == 4:
+        if sheet.max_row == 5:
             sheet.append(["Нет рекомендаций", "", "", "", "Данных недостаточно"])
 
-        self._style_sheet(sheet, header_row=4)
-        sheet.freeze_panes = "A5"
+        self._style_sheet(sheet, header_row=5)
+        sheet.freeze_panes = "A6"
 
-    def _fill_problems(self, sheet: Any, problems: list[dict[str, Any]]) -> None:
+    def _fill_problems(
+        self,
+        sheet: Any,
+        problems: list[dict[str, Any]],
+        scope_label: str,
+    ) -> None:
         headers = [
             "Причина",
             "Исполнитель",
@@ -530,6 +602,7 @@ class WorkloadReportService:
         ]
         sheet.append(["Проблемные карточки"])
         sheet.append([f"Сформирован: {datetime.now().strftime('%Y-%m-%d %H:%M')}"])
+        sheet.append([scope_label])
         sheet.append([])
         sheet.append(headers)
 
@@ -549,8 +622,8 @@ class WorkloadReportService:
         if not problems:
             sheet.append(["Нет проблемных карточек", "", "", "", "", "", ""])
 
-        self._style_sheet(sheet, header_row=4)
-        sheet.freeze_panes = "A5"
+        self._style_sheet(sheet, header_row=5)
+        sheet.freeze_panes = "A6"
 
     def _fill_details(self, sheet: Any, details: list[dict[str, Any]]) -> None:
         headers = [

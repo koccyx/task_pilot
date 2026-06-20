@@ -2,7 +2,6 @@
 
 from datetime import date, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from openpyxl import load_workbook
@@ -15,55 +14,63 @@ class FakeKaitenClient:
     """Minimal async Kaiten client for report tests."""
 
     def __init__(self) -> None:
-        soon = (date.today() + timedelta(days=2)).isoformat()
-        overdue = (date.today() - timedelta(days=1)).isoformat()
-        self.get = AsyncMock(
-            side_effect=[
-                {
-                    "users": [
-                        {
-                            "id": 1,
-                            "full_name": "Анна Иванова",
-                            "email": "anna@example.test",
-                        },
-                        {
-                            "id": 2,
-                            "full_name": "Иван Петров",
-                            "email": "ivan@example.test",
-                        },
-                        {
-                            "id": 3,
-                            "full_name": "Мария Сидорова",
-                            "email": "maria@example.test",
-                        },
-                    ]
-                },
-                {
-                    "cards": [
-                        {
-                            "id": 101,
-                            "title": "Сделать API",
-                            "owner_id": 1,
-                            "due_date": soon,
-                            "asap": True,
-                            "board": {"title": "Backend"},
-                            "column": {"name": "In Progress"},
-                        },
-                        {
-                            "id": 102,
-                            "title": "Починить баг",
-                            "owner": {"id": 2, "full_name": "Иван Петров"},
-                            "due_date": overdue,
-                            "asap": False,
-                        },
-                        {
-                            "id": 103,
-                            "title": "Разобрать входящие",
-                        },
-                    ]
-                },
-            ]
-        )
+        self.soon = (date.today() + timedelta(days=2)).isoformat()
+        self.overdue = (date.today() - timedelta(days=1)).isoformat()
+        self.requested_endpoints: list[str] = []
+
+    async def get(self, endpoint: str) -> dict:
+        self.requested_endpoints.append(endpoint)
+
+        if endpoint == "spaces":
+            return {"spaces": [{"id": 100, "title": "jmlc"}]}
+        if endpoint == "spaces/100/boards":
+            return {"boards": [{"id": 200, "title": "основная доска"}]}
+        if endpoint.startswith("spaces/100/users?"):
+            return {
+                "users": [
+                    {
+                        "id": 1,
+                        "full_name": "Анна Иванова",
+                        "email": "anna@example.test",
+                    },
+                    {
+                        "id": 2,
+                        "full_name": "Иван Петров",
+                        "email": "ivan@example.test",
+                    },
+                    {
+                        "id": 3,
+                        "full_name": "Мария Сидорова",
+                        "email": "maria@example.test",
+                    },
+                ]
+            }
+        if endpoint.startswith("cards?"):
+            return {
+                "cards": [
+                    {
+                        "id": 101,
+                        "title": "Сделать API",
+                        "owner_id": 1,
+                        "due_date": self.soon,
+                        "asap": True,
+                        "board": {"title": "основная доска"},
+                        "column": {"name": "In Progress"},
+                    },
+                    {
+                        "id": 102,
+                        "title": "Починить баг",
+                        "owner": {"id": 2, "full_name": "Иван Петров"},
+                        "due_date": self.overdue,
+                        "asap": False,
+                    },
+                    {
+                        "id": 103,
+                        "title": "Разобрать входящие",
+                    },
+                ]
+            }
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
 
 
 def test_detects_report_requests() -> None:
@@ -76,7 +83,8 @@ def test_detects_report_requests() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_creates_xlsx_with_summary() -> None:
-    service = WorkloadReportService(client=FakeKaitenClient())
+    client = FakeKaitenClient()
+    service = WorkloadReportService(client=client)
 
     result = await service.generate()
 
@@ -92,27 +100,33 @@ async def test_generate_creates_xlsx_with_summary() -> None:
     details = workbook["Карточки"]
 
     assert summary["A1"].value == "Отчет по загруженности команды"
-    assignees = {summary.cell(row=row, column=1).value for row in range(5, 9)}
+    assert summary["A3"].value == "Пространство: jmlc; доска: основная доска"
+    assignees = {summary.cell(row=row, column=1).value for row in range(6, 10)}
     assert {
         "Анна Иванова",
         "Иван Петров",
         "Мария Сидорова",
         "Без ответственного",
     } <= assignees
-    assert summary["I4"].value == "Риск"
+    assert summary["I5"].value == "Риск"
 
     recommendation_values = {
         recommendations.cell(row=row, column=2).value
-        for row in range(5, recommendations.max_row + 1)
+        for row in range(6, recommendations.max_row + 1)
     }
     assert "Мария Сидорова" in recommendation_values
     assert problems["A1"].value == "Проблемные карточки"
     problem_reasons = {
-        problems.cell(row=row, column=1).value for row in range(5, problems.max_row + 1)
+        problems.cell(row=row, column=1).value for row in range(6, problems.max_row + 1)
     }
     assert any("просрочена" in str(reason) for reason in problem_reasons)
     assert any("без ответственного" in str(reason) for reason in problem_reasons)
     assert details.max_row == 4
     assert details["I1"].value == "Без дедлайна"
+    assert "spaces/100/boards" in client.requested_endpoints
+    assert any(
+        "space_id=100" in endpoint and "board_id=200" in endpoint
+        for endpoint in client.requested_endpoints
+    )
 
     Path(result.document_path).unlink(missing_ok=True)
