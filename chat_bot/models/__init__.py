@@ -10,6 +10,7 @@ from .message import Message
 from .message_statistics import MessageStatistics
 from .messages_data import MessagesData
 from .postgres_config import PostgresConfig
+from .route_result import RouteResult
 from .summary_response import SummaryResponse
 from .task import Task
 from .task_extraction_response import TaskExtractionOutput, TaskExtractionResponse
@@ -24,6 +25,7 @@ __all__ = [
     "BotConfig",
     "AIConfig",
     "PostgresConfig",
+    "RouteResult",
     "Task",
     "UserProfile",
     "TaskExtractionOutput",

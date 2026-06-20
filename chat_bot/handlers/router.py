@@ -4,14 +4,15 @@ Message router for handling Telegram messages.
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union
 
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from ..assistant import Assistant
 from ..commands import CommandParser
-from ..models import InteractionInfo, InteractionType
+from ..models import InteractionInfo, InteractionType, RouteResult
+from ..reports import WorkloadReportService
 from ..repository_base import BaseChatRepository
 from .command_handler import CommandHandler
 from .mcp_handler import MCPHandler
@@ -48,6 +49,7 @@ class MessageRouter:
 
         # Initialize command handler
         self.command_handler = CommandHandler(repository=self.repository)
+        self.workload_report_service = WorkloadReportService()
 
         # Initialize MCP handler for natural language processing
         if assistant is not None:
@@ -133,7 +135,7 @@ class MessageRouter:
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> Optional[str]:
+    ) -> Optional[Union[str, RouteResult]]:
         """
         Route incoming message to appropriate handler.
 
@@ -168,7 +170,7 @@ class MessageRouter:
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> Optional[str]:
+    ) -> Optional[Union[str, RouteResult]]:
         """Handle slash command."""
         message = update.message or update.channel_post
         if not message or not message.text:
@@ -202,7 +204,7 @@ class MessageRouter:
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
         interaction_info: InteractionInfo,
-    ) -> Optional[str]:
+    ) -> Optional[Union[str, RouteResult]]:
         """Handle bot mention for natural language processing."""
         message = update.message or update.channel_post
         if not message or not message.text:
@@ -225,6 +227,18 @@ class MessageRouter:
             chat_id,
             clean_text[:50],
         )
+
+        if WorkloadReportService.is_workload_report_request(clean_text):
+            logger.info("Generating workload report for chat %d", chat_id)
+            try:
+                return await self.workload_report_service.generate()
+            except Exception as exc:
+                logger.error(
+                    "Failed to generate workload report: %s",
+                    exc,
+                    exc_info=True,
+                )
+                return f"❌ Не удалось сформировать отчет по загруженности: {exc}"
 
         # Use MCP handler for natural language processing
         if self.mcp_handler:

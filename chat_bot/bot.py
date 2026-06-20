@@ -34,7 +34,14 @@ from .commands.registry import CommandRegistry
 from .formatter import MessageFormatter
 from .handlers import MessageRouter
 from .healthcheck import HealthCheckServer
-from .models import BotConfig, Message, MessagesData, PostgresConfig, UserProfile
+from .models import (
+    BotConfig,
+    Message,
+    MessagesData,
+    PostgresConfig,
+    RouteResult,
+    UserProfile,
+)
 from .repository_postgres import ChatRepository as PostgresChatRepository
 from .repository_base import BaseChatRepository
 from .telegram_formatter import TelegramMarkdownFormatter
@@ -250,6 +257,22 @@ class ChatLoggerBot:
         # Final fallback: plain text
         return await message.reply_text(truncated)
 
+    async def send_route_result(
+        self, message: TelegramMessage, result: str | RouteResult
+    ) -> Optional[TelegramMessage]:
+        """Send a routed text response and optional document attachment."""
+        if isinstance(result, str):
+            return await self.send_formatted_message(message, result)
+
+        sent_message = await self.send_formatted_message(message, result.text)
+        if result.document_path:
+            with result.document_path.open("rb") as document:
+                await message.reply_document(
+                    document=document,
+                    filename=result.document_filename or result.document_path.name,
+                )
+        return sent_message
+
     async def get_today_messages(self, chat_id: int) -> MessagesData:
         """Get today's messages for a specific chat."""
         return await self.repository.read_chat_messages(chat_id)
@@ -350,7 +373,7 @@ class ChatLoggerBot:
 
                 response = await self.message_router.route(update, context)
                 if response:
-                    sent_message = await self.send_formatted_message(
+                    sent_message = await self.send_route_result(
                         update.message, response
                     )
                     # Save bot response with is_bot_message=True
@@ -358,7 +381,11 @@ class ChatLoggerBot:
                         await self._save_bot_response(
                             chat_id=chat_id,
                             message_id=sent_message.message_id,
-                            text=response,
+                            text=(
+                                response.text
+                                if isinstance(response, RouteResult)
+                                else response
+                            ),
                             reply_to_message_id=message.message_id,
                         )
 
@@ -382,7 +409,7 @@ class ChatLoggerBot:
 
             response = await self.message_router.route(update, context)
             if response:
-                await self.send_formatted_message(message, response)
+                await self.send_route_result(message, response)
 
         except Exception as e:
             logger.error(f"Error handling Kaiten command: {e}")

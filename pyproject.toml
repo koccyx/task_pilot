@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.11.7",
     "aiofiles>=23.0.0",
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,7 @@ bot = [
     "httpx>=0.28.1",
     "langchain-mcp-adapters>=0.1.0",
     "telegramify-markdown>=0.1.0",
+    "openpyxl>=3.1.0",
     "fastmcp>=2.3.2",
 ]
 
