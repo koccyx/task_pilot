@@ -8,7 +8,13 @@ from datetime import datetime
 from typing import Annotated, Any, List, Optional, TypedDict
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -29,6 +35,7 @@ TASK_TOOL_NAMES = {
 class TaskAgentState(TypedDict, total=False):
     messages: Annotated[List[BaseMessage], add_messages]
     final_response: str
+    input_message_count: int
 
 
 class SimpleTaskAgent:
@@ -43,8 +50,9 @@ class SimpleTaskAgent:
         tools: List[Any],
         history: Optional[List[Message]] = None,
         user_profiles: Optional[List[UserProfile]] = None,
+        current_user: Optional[UserProfile] = None,
     ) -> str:
-        """Use the last ten messages to create or update Kaiten tasks."""
+        """Use the last ten messages to view, create, or update Kaiten tasks."""
         run_id = uuid4().hex
         started_at = time.perf_counter()
         history = (history or [])[-10:]
@@ -70,22 +78,29 @@ class SimpleTaskAgent:
 
         graph = self._build_graph(
             tools=selected_tools,
-            system_prompt=self._system_prompt(user_profiles),
+            system_prompt=self._system_prompt(user_profiles, current_user),
             run_id=run_id,
         )
         input_messages = self._history_messages(history)
         input_messages.append(HumanMessage(content=f"Текущий запрос: {message}"))
         try:
             result = await graph.ainvoke(
-                {"messages": input_messages, "final_response": ""},
+                {
+                    "messages": input_messages,
+                    "final_response": "",
+                    "input_message_count": len(input_messages),
+                },
                 config={
                     "recursion_limit": int(
                         os.getenv("SIMPLE_TASK_AGENT_RECURSION_LIMIT", "30")
                     )
                 },
             )
-            response = result.get("final_response", "") or self._last_ai_content(
-                result.get("messages", [])
+            generated_messages = result.get("messages", [])[len(input_messages) :]
+            response = (
+                result.get("final_response", "")
+                or self._last_ai_content(generated_messages)
+                or self._last_tool_content(generated_messages)
             )
             logger.info(
                 "Simple task agent completed",
@@ -141,7 +156,13 @@ class SimpleTaskAgent:
             return "finalize"
 
         def finalize(state: TaskAgentState) -> TaskAgentState:
-            return {"final_response": self._last_ai_content(state["messages"])}
+            generated_messages = state["messages"][
+                state.get("input_message_count", 0) :
+            ]
+            response = self._last_ai_content(
+                generated_messages
+            ) or self._last_tool_content(generated_messages)
+            return {"final_response": response}
 
         graph.add_node("agent", agent_step)
         graph.add_node("tools", tool_node)
@@ -177,7 +198,19 @@ class SimpleTaskAgent:
         return ""
 
     @staticmethod
-    def _system_prompt(user_profiles: List[UserProfile]) -> str:
+    def _last_tool_content(messages: List[BaseMessage]) -> str:
+        for message in reversed(messages):
+            if isinstance(message, ToolMessage):
+                content = getattr(message, "content", "")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+        return ""
+
+    @staticmethod
+    def _system_prompt(
+        user_profiles: List[UserProfile],
+        current_user: Optional[UserProfile] = None,
+    ) -> str:
         users = []
         for profile in user_profiles:
             users.append(
@@ -186,6 +219,16 @@ class SimpleTaskAgent:
                 f"Kaiten ID: {profile.kaiten_user_id or 'не указан'}"
             )
         user_directory = "\n".join(users) or "- соответствия пользователей отсутствуют"
+        if current_user is None:
+            current_user_identity = "- текущий пользователь не определён"
+        else:
+            current_user_identity = (
+                f"- Telegram: "
+                f"{current_user.telegram_username or current_user.introduced_name}; "
+                f"Kaiten: "
+                f"{current_user.kaiten_user_name or current_user.introduced_name}; "
+                f"Kaiten ID: {current_user.kaiten_user_id or 'не указан'}"
+            )
         return f"""
 Ты простой агент для работы только с задачами Kaiten.
 
@@ -193,6 +236,26 @@ class SimpleTaskAgent:
 Используй их как единый контекст и выполняй запрос до конца.
 
 Правила:
+- Запросы "что на мне", "мои задачи", "покажи мои карточки" и аналогичные означают:
+  вызови manage_cards с action="list" и фильтром текущего пользователя.
+- Запросы о задачах другого человека означают: найди человека в каталоге пользователей
+  и вызови manage_cards с action="list" и его фильтром.
+- Для фильтра по исполнителю используй owner_id, если Kaiten ID известен, иначе owner_name
+  с именем пользователя в Kaiten. Для просмотра по исполнителю доска не обязательна.
+- Запрос просмотра не должен создавать, изменять, перемещать или удалять карточки.
+- Если указанного человека нельзя однозначно найти в каталоге, уточни только человека.
+- В ответе на просмотр кратко перечисли найденные карточки и их существенные поля.
+- Запросы "назначь меня ответственным", "назначь Степана на задачу" и аналогичные
+  означают назначение ответственного через manage_members с action="set_responsible".
+- Для "назначь меня" используй текущего пользователя. Для другого человека найди
+  его в каталоге пользователей. Передавай owner_id, если Kaiten ID известен,
+  иначе owner_name с именем пользователя в Kaiten.
+- Для назначения на существующую карточку нужен card_id. Если ID неизвестен, найди
+  карточку через manage_cards с action="search" по её названию. Назначай только если
+  найдена ровно одна подходящая карточка; иначе уточни карточку.
+- Для назначения ответственного на существующую карточку доска не обязательна.
+- Запрос назначения не должен создавать новую карточку, если пользователь явно
+  не попросил одновременно создать её.
 - Создавай и обновляй карточки, пиши им содержательные описания из контекста диалога.
 - Запросы вроде "поставь задачки по диалогу" означают: найди в сообщениях намерения,
   договорённости и поручения, затем создай отдельную карточку для каждого пункта.
@@ -203,12 +266,18 @@ class SimpleTaskAgent:
   явно не потребовал конкретное значение.
 - Если доска не указана и её нельзя восстановить из диалога, спроси только доску.
 - При создании в колонке сначала создай карточку, затем перемести её через move_card.
-- Для назначения ответственного сначала создай карточку, затем используй manage_members.
+- При создании карточки с ответственным сначала создай карточку, затем используй
+  manage_members с action="set_responsible" и ID созданной карточки.
 - Не выдумывай доску, пользователя, срок или результат инструмента.
 - В финальном ответе дай только обычный краткий итог без внутренних статусов.
+- Если человек пишет "Я сделал" то перемещай задачку в колонку сделано или другую конечную колонку на доске означающую завершение задачи.
+- Если человек пишет "Я начал делать" значит перемести задачку на колонку В процессе или другую с таким же смыслом.
 
 Каталог пользователей:
 {user_directory}
+
+Текущий пользователь:
+{current_user_identity}
 
 Текущая дата: {datetime.now().date().isoformat()}
 """.strip()

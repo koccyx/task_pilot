@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from chat_bot.handlers.mcp_handler import MCPHandler
-from chat_bot.models import Message
+from chat_bot.models import Message, UserProfile
 
 
 def make_message(
@@ -99,8 +99,17 @@ class TestMCPHandlerContext:
         handler._tools_cached_at = time.time()
         handler.task_agent.run = AsyncMock(return_value="Готово")
         repository = MagicMock()
-        repository.get_user_profile = AsyncMock(return_value=None)
-        repository.list_user_profiles = AsyncMock(return_value=[])
+        current_user = UserProfile(
+            chat_id=123,
+            telegram_user_id=456,
+            telegram_username="stepan",
+            telegram_display_name="Степан",
+            introduced_name="Степан",
+            kaiten_user_name="Stepan1922",
+            kaiten_user_id=1056226,
+        )
+        repository.get_user_profile = AsyncMock(return_value=current_user)
+        repository.list_user_profiles = AsyncMock(return_value=[current_user])
         repository.read_recent_messages = AsyncMock(return_value=MagicMock(messages=[]))
 
         result = await handler.handle(
@@ -112,6 +121,7 @@ class TestMCPHandlerContext:
 
         assert result == "Готово"
         handler.task_agent.run.assert_awaited_once()
+        assert handler.task_agent.run.await_args.kwargs["current_user"] == current_user
         repository.read_recent_messages.assert_awaited_once_with(
             chat_id=123,
             limit=10,

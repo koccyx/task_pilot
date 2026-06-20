@@ -83,6 +83,10 @@ class MessageRouter:
                         reply_to_message_id=message.reply_to_message.message_id,
                     )
 
+        # In private chats every text message is addressed to the bot.
+        if message.chat and message.chat.type == "private":
+            return InteractionInfo(interaction_type=InteractionType.NEW_CONVERSATION)
+
         # Check for @mention (new conversation)
         text_lower = message.text.lower()
         if f"@{self.bot_username}" in text_lower:
@@ -117,7 +121,11 @@ class MessageRouter:
             return False
         # Exclude menu and help commands - they are handled separately
         text = message.text.strip()
-        if text in ("/menu", "/help") or text.startswith("/menu ") or text.startswith("/help "):
+        if (
+            text in ("/menu", "/help")
+            or text.startswith("/menu ")
+            or text.startswith("/help ")
+        ):
             return False
         return CommandParser.is_command(message.text)
 

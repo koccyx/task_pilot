@@ -214,6 +214,7 @@ class MCPHandler:
                 tools=self._tools,
                 history=history,
                 user_profiles=user_profiles,
+                current_user=user_profile,
             )
             return response
 

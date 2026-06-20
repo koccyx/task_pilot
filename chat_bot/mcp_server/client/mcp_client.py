@@ -4,6 +4,7 @@ This module provides a client that communicates with the MCP server
 using FastMCP's official Client class with streamable-http transport.
 """
 
+import json
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -435,12 +436,45 @@ class KaitenMCPClient:
                 text_parts = []
                 for item in content:
                     if hasattr(item, "text"):
-                        text_parts.append(item.text)
+                        text_parts.append(
+                            KaitenMCPClient._extract_user_text_from_payload(item.text)
+                        )
                     elif isinstance(item, dict) and item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
+                        text_parts.append(
+                            KaitenMCPClient._extract_user_text_from_payload(
+                                item.get("text", "")
+                            )
+                        )
                 return "\n".join(text_parts)
 
         return str(result)
+
+    @staticmethod
+    def _extract_user_text_from_payload(text: str) -> str:
+        """Extract user-facing text from serialized MCP-style tool payloads."""
+        if not isinstance(text, str) or not text.strip():
+            return text
+
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            return text
+
+        if not isinstance(payload, dict):
+            return text
+
+        content = payload.get("content")
+        if not isinstance(content, list):
+            return text
+
+        text_parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                item_text = item.get("text", "")
+                if isinstance(item_text, str) and item_text.strip():
+                    text_parts.append(item_text)
+
+        return "\n".join(text_parts) if text_parts else text
 
     async def call_tool(
         self, name: str, arguments: Optional[Dict[str, Any]] = None

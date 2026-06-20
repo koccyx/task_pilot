@@ -39,10 +39,46 @@ class TestStructuredLogging:
 class TestMCPClientLogging:
     """Tests for MCP client tool-call logging."""
 
+    def test_extract_text_from_serialized_mcp_payload(self) -> None:
+        """Serialized MCP-style dict payloads should expose only content text."""
+        fake_result = MagicMock()
+        fake_result.content = [
+            MagicMock(
+                text=json.dumps(
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Found 1 cards:\n• Test card (ID: 1)",
+                            }
+                        ],
+                        "structured_content": [
+                            {
+                                "id": 1,
+                                "owner": {
+                                    "avatar_initials_url": "data:image/png;base64,AAAA"
+                                },
+                            }
+                        ],
+                        "meta": {"operation": "list"},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        ]
+
+        result = KaitenMCPClient._extract_text_from_result(fake_result)
+
+        assert result == "Found 1 cards:\n• Test card (ID: 1)"
+        assert "structured_content" not in result
+        assert "base64" not in result
+
     @pytest.mark.asyncio
     async def test_tool_function_logs_start_and_completion(self) -> None:
         """LangChain tool wrapper should log start and completion events."""
-        client = KaitenMCPClient(MCPClientConfig(server_url="http://localhost:8000/mcp"))
+        client = KaitenMCPClient(
+            MCPClientConfig(server_url="http://localhost:8000/mcp")
+        )
 
         fake_result = MagicMock()
         fake_result.isError = False
@@ -74,9 +110,60 @@ class TestMCPClientLogging:
         assert completed_call.kwargs["extra"]["tool_result"] == "Success"
 
     @pytest.mark.asyncio
+    async def test_tool_function_returns_only_content_text_from_serialized_payload(
+        self,
+    ) -> None:
+        """LangChain tool wrapper should not return structured_content JSON."""
+        client = KaitenMCPClient(
+            MCPClientConfig(server_url="http://localhost:8000/mcp")
+        )
+
+        fake_result = MagicMock()
+        fake_result.isError = False
+        fake_result.content = [
+            MagicMock(
+                text=json.dumps(
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Found 1 cards:\n• Test card (ID: 1)",
+                            }
+                        ],
+                        "structured_content": [
+                            {
+                                "id": 1,
+                                "owner": {
+                                    "avatar_initials_url": "data:image/png;base64,AAAA"
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        ]
+
+        transport_client = MagicMock()
+        transport_client.__aenter__ = AsyncMock(return_value=transport_client)
+        transport_client.__aexit__ = AsyncMock(return_value=None)
+        transport_client.call_tool = AsyncMock(return_value=fake_result)
+
+        client._create_client = MagicMock(return_value=transport_client)  # type: ignore[method-assign]
+        tool_func = client._create_tool_function("manage_cards")
+
+        result = await tool_func(action="list")
+
+        assert result == "Found 1 cards:\n• Test card (ID: 1)"
+        assert "structured_content" not in result
+        assert "base64" not in result
+
+    @pytest.mark.asyncio
     async def test_tool_function_drops_none_arguments_before_call(self) -> None:
         """Optional arguments with None should not be forwarded to MCP."""
-        client = KaitenMCPClient(MCPClientConfig(server_url="http://localhost:8000/mcp"))
+        client = KaitenMCPClient(
+            MCPClientConfig(server_url="http://localhost:8000/mcp")
+        )
 
         fake_result = MagicMock()
         fake_result.isError = False

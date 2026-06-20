@@ -4,9 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from chat_bot.models import Message
+from chat_bot.models import Message, UserProfile
 from chat_bot.simple_task_agent import SimpleTaskAgent
 
 
@@ -46,6 +46,86 @@ class TestSimpleTaskAgent:
         assert len(input_messages) == 11
         assert input_messages[0].content.startswith("[3]")
         assert input_messages[-1].content == "Текущий запрос: создай задачи по диалогу"
+        assert graph.ainvoke.await_args.args[0]["input_message_count"] == 11
+
+    @pytest.mark.asyncio
+    async def test_run_does_not_return_bot_message_from_history(self) -> None:
+        agent = SimpleTaskAgent(llm=MagicMock())
+        graph = MagicMock()
+        graph.ainvoke = AsyncMock(
+            return_value={
+                "messages": [
+                    HumanMessage(content="какие задачки есть на доске Основная доска?"),
+                    AIMessage(
+                        content="[1141] @dialog_manager_bot: Да, я здесь! Чем могу помочь?"
+                    ),
+                    HumanMessage(
+                        content=(
+                            "Текущий запрос: какие задачки есть на доске "
+                            "Основная доска?"
+                        )
+                    ),
+                    AIMessage(content=""),
+                ],
+                "final_response": "",
+            }
+        )
+        history = [
+            Message(
+                message_id=1141,
+                timestamp="2026-06-19T20:07:12",
+                sender_name="@dialog_manager_bot",
+                text="Да, я здесь! Чем могу помочь?",
+                is_bot_message=True,
+            )
+        ]
+        tools = [SimpleNamespace(name="manage_cards")]
+
+        with patch.object(agent, "_build_graph", return_value=graph):
+            result = await agent.run(
+                "какие задачки есть на доске Основная доска?",
+                tools,
+                history,
+            )
+
+        assert result == "Не удалось получить результат."
+
+    @pytest.mark.asyncio
+    async def test_run_falls_back_to_tool_result_when_model_response_is_empty(
+        self,
+    ) -> None:
+        agent = SimpleTaskAgent(llm=MagicMock())
+        graph = MagicMock()
+        graph.ainvoke = AsyncMock(
+            return_value={
+                "messages": [
+                    HumanMessage(content="Текущий запрос: какие задачки есть на мне?"),
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {"name": "manage_cards", "args": {}, "id": "call_1"}
+                        ],
+                    ),
+                    ToolMessage(
+                        content=(
+                            "Found 2 cards:\n"
+                            "• Познакомьтесь с Kaiten на практике (ID: 66036670)\n"
+                            "• Kaiten: с чего начать (ID: 66036672)"
+                        ),
+                        tool_call_id="call_1",
+                    ),
+                    AIMessage(content=""),
+                ],
+                "final_response": "",
+            }
+        )
+        tools = [SimpleNamespace(name="manage_cards")]
+
+        with patch.object(agent, "_build_graph", return_value=graph):
+            result = await agent.run("какие задачки есть на мне?", tools)
+
+        assert "Found 2 cards" in result
+        assert "66036670" in result
 
     def test_system_prompt_requires_only_title_and_board(self) -> None:
         prompt = SimpleTaskAgent._system_prompt([])
@@ -54,3 +134,43 @@ class TestSimpleTaskAgent:
         assert "Описания формируй самостоятельно" not in prompt
         assert "Описание формируй самостоятельно" in prompt
         assert "спроси только доску" in prompt
+
+    def test_system_prompt_explains_how_to_list_tasks_by_assignee(self) -> None:
+        current_user = UserProfile(
+            chat_id=123,
+            telegram_user_id=456,
+            telegram_username="stepan",
+            telegram_display_name="Степан",
+            introduced_name="Степан",
+            kaiten_user_name="Stepan1922",
+            kaiten_user_id=1056226,
+        )
+
+        prompt = SimpleTaskAgent._system_prompt([current_user], current_user)
+
+        assert 'manage_cards с action="list"' in prompt
+        assert "owner_id" in prompt
+        assert "Для просмотра по исполнителю доска не обязательна" in prompt
+        assert "Запрос просмотра не должен создавать" in prompt
+        assert "Kaiten: Stepan1922" in prompt
+        assert "Kaiten ID: 1056226" in prompt
+
+    def test_system_prompt_explains_how_to_assign_responsible(self) -> None:
+        current_user = UserProfile(
+            chat_id=123,
+            telegram_user_id=456,
+            telegram_username="stepan",
+            telegram_display_name="Степан",
+            introduced_name="Степан",
+            kaiten_user_name="Stepan1922",
+            kaiten_user_id=1056226,
+        )
+
+        prompt = SimpleTaskAgent._system_prompt([current_user], current_user)
+
+        assert 'manage_members с action="set_responsible"' in prompt
+        assert 'manage_cards с action="search"' in prompt
+        assert 'Для "назначь меня" используй текущего пользователя' in prompt
+        assert "Назначай только если" in prompt
+        assert "доска не обязательна" in prompt
+        assert "не должен создавать новую карточку" in prompt
