@@ -22,6 +22,19 @@ services:
       retries: 5
       start_period: 10s
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: task_pilot-qdrant
+    restart: unless-stopped
+    profiles:
+      - embeddings
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - task_pilot-network
+
   mcp-server:
     build:
       context: .
@@ -75,9 +88,46 @@ services:
       - postgres
       - mcp-server
 
+  rag-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    image: task_pilot-rag-web:latest
+    container_name: task_pilot-rag-web
+    restart: unless-stopped
+    profiles:
+      - embeddings
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - RAG_QDRANT_COLLECTION=internal_documents_bge_m3
+      - RAG_WEB_PORT=8090
+      - RAG_EMBEDDING_PROVIDER=ollama
+      - RAG_EMBEDDING_MODEL=bge-m3
+      - RAG_EMBEDDING_BASE_URL=http://host.docker.internal:11434
+      - RAG_EMBEDDING_DIMENSION=1024
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-task_pilot}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "chat_bot.rag.web"]
+    networks:
+      - task_pilot-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      - postgres
+      - qdrant
+
 networks:
   task_pilot-network:
     driver: bridge
 
 volumes:
   postgres_data:
+  qdrant_data:
