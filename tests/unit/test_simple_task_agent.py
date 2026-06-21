@@ -7,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from chat_bot.models import Message, UserProfile
+from chat_bot.rag.agent_context import RagContext
 from chat_bot.simple_task_agent import SimpleTaskAgent
 
 
@@ -47,6 +48,71 @@ class TestSimpleTaskAgent:
         assert input_messages[0].content.startswith("[3]")
         assert input_messages[-1].content == "Текущий запрос: создай задачи по диалогу"
         assert graph.ainvoke.await_args.args[0]["input_message_count"] == 11
+
+    @pytest.mark.asyncio
+    async def test_run_adds_rag_context_to_system_prompt_when_needed(self) -> None:
+        rag_builder = MagicMock()
+        rag_builder.build_context = AsyncMock(
+            return_value=RagContext(
+                used=True,
+                query="регламент отпусков",
+                results=[],
+                context_block="\n\n## Контекст из внутренней базы знаний\nРегламент",
+                reason="docs request",
+            )
+        )
+        agent = SimpleTaskAgent(llm=MagicMock(), rag_context_builder=rag_builder)
+        graph = MagicMock()
+        graph.ainvoke = AsyncMock(
+            return_value={
+                "messages": [AIMessage(content="Ответ по регламенту.")],
+                "final_response": "Ответ по регламенту.",
+            }
+        )
+        tools = [SimpleNamespace(name="manage_cards")]
+
+        with patch.object(agent, "_build_graph", return_value=graph) as build_graph:
+            result = await agent.run(
+                "что написано в регламенте по отпускам?",
+                tools,
+                history=[],
+            )
+
+        assert result == "Ответ по регламенту."
+        rag_builder.build_context.assert_awaited_once()
+        system_prompt = build_graph.call_args.kwargs["system_prompt"]
+        assert "Контекст из внутренней базы знаний" in system_prompt
+        assert "Регламент" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_run_does_not_add_rag_context_when_gate_skips_it(self) -> None:
+        rag_builder = MagicMock()
+        rag_builder.build_context = AsyncMock(
+            return_value=RagContext(
+                used=False,
+                query="",
+                results=[],
+                context_block="",
+                reason="no docs markers",
+            )
+        )
+        agent = SimpleTaskAgent(llm=MagicMock(), rag_context_builder=rag_builder)
+        graph = MagicMock()
+        graph.ainvoke = AsyncMock(
+            return_value={
+                "messages": [AIMessage(content="Создана карточка.")],
+                "final_response": "Создана карточка.",
+            }
+        )
+        tools = [SimpleNamespace(name="manage_cards")]
+
+        with patch.object(agent, "_build_graph", return_value=graph) as build_graph:
+            result = await agent.run("создай карточку", tools, history=[])
+
+        assert result == "Создана карточка."
+        system_prompt = build_graph.call_args.kwargs["system_prompt"]
+        assert "no docs markers" not in system_prompt
+        assert "Регламент" not in system_prompt
 
     @pytest.mark.asyncio
     async def test_run_does_not_return_bot_message_from_history(self) -> None:
@@ -130,6 +196,9 @@ class TestSimpleTaskAgent:
     def test_system_prompt_requires_only_title_and_board(self) -> None:
         prompt = SimpleTaskAgent._system_prompt([])
 
+        assert "ответов по внутренней базе знаний" in prompt
+        assert "Контекст из внутренней базы знаний" in prompt
+        assert "можешь отвечать на вопросы пользователя" in prompt
         assert "обязательны только название и доска" in prompt
         assert "Описания формируй самостоятельно" not in prompt
         assert "Описание формируй самостоятельно" in prompt

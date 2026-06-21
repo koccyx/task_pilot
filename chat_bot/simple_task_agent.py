@@ -21,6 +21,7 @@ from langgraph.prebuilt import ToolNode
 
 from .logging_config import get_logger, sanitize_for_logging
 from .models import Message, UserProfile
+from .rag.agent_context import AgentRagContextBuilder
 
 logger = get_logger(__name__)
 
@@ -44,8 +45,13 @@ class TaskAgentState(TypedDict, total=False):
 class SimpleTaskAgent:
     """One ReAct agent with only task-related Kaiten tools."""
 
-    def __init__(self, llm: Any) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        rag_context_builder: Optional[AgentRagContextBuilder] = None,
+    ) -> None:
         self.llm = llm
+        self.rag_context_builder = rag_context_builder
 
     async def run(
         self,
@@ -79,9 +85,14 @@ class SimpleTaskAgent:
         if not selected_tools:
             return "Инструменты для работы с задачами не настроены."
 
+        system_prompt = self._system_prompt(user_profiles, current_user)
+        rag_context = await self._build_rag_context(message=message, history=history)
+        if rag_context:
+            system_prompt += rag_context
+
         graph = self._build_graph(
             tools=selected_tools,
-            system_prompt=self._system_prompt(user_profiles, current_user),
+            system_prompt=system_prompt,
             run_id=run_id,
         )
         input_messages = self._history_messages(history)
@@ -128,6 +139,18 @@ class SimpleTaskAgent:
                 },
             )
             return f"Ошибка при работе с задачами: {exc}"
+
+    async def _build_rag_context(self, message: str, history: List[Message]) -> str:
+        if os.getenv("RAG_AGENT_ENABLED", "true").lower() != "true":
+            return ""
+
+        builder = self.rag_context_builder
+        if builder is None:
+            builder = AgentRagContextBuilder(llm=self.llm)
+            self.rag_context_builder = builder
+
+        context = await builder.build_context(message=message, history=history)
+        return context.context_block if context.used else ""
 
     def _build_graph(self, tools: List[Any], system_prompt: str, run_id: str) -> Any:
         graph = StateGraph(TaskAgentState)
@@ -233,12 +256,19 @@ class SimpleTaskAgent:
                 f"Kaiten ID: {current_user.kaiten_user_id or 'не указан'}"
             )
         return f"""
-Ты простой агент для работы только с задачами Kaiten.
+Ты агент для работы с задачами Kaiten и ответов по внутренней базе знаний.
 
 Тебе передаются последние 10 сообщений диалога и текущий запрос.
 Используй их как единый контекст и выполняй запрос до конца.
 
 Правила:
+- Если в системном сообщении есть раздел "Контекст из внутренней базы знаний",
+  можешь отвечать на вопросы пользователя по этому разделу без вызова инструментов.
+- Для вопросов по внутренним документам используй только предоставленный RAG-контекст.
+  Если в нём нет ответа, прямо скажи, что в загруженных документах не нашлось
+  достаточно информации.
+- Не отвечай на вопрос по документам фразой, что ты можешь работать только с Kaiten:
+  RAG-контекст является разрешённым источником для информационного ответа.
 - Запросы "что на мне", "мои задачи", "покажи мои карточки" и аналогичные означают:
   вызови manage_cards с action="list" и фильтром текущего пользователя.
 - Запросы о задачах другого человека означают: найди человека в каталоге пользователей
