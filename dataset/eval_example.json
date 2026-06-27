@@ -1,0 +1,407 @@
+{
+  "benchmark_id": "kaiten-agent-smoke-v1",
+  "run_id": "run-example-2026-06-22T18-30-00Z",
+  "eval_id": "eval-example-2026-06-22T18-31-00Z",
+  "judge": {
+    "type": "llm_as_judge",
+    "model": "example-judge-model",
+    "run_time": "2026-06-22T18:31:00Z"
+  },
+  "results": [
+    {
+      "case_id": 1,
+      "case_name": "Создание задачи с дедлайном",
+      "criteria_type": "must_include",
+      "sample_id": 1,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "задача создана",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "подготовить презентацию",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "до пятницы",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 1,
+      "case_name": "Создание задачи с дедлайном",
+      "criteria_type": "must_not_include",
+      "sample_id": 1,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "не знаю",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не могу",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "уточните дедлайн",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "задачка",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 1,
+      "case_name": "Создание задачи с дедлайном",
+      "criteria_type": "success_criteria",
+      "sample_id": 1,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "Создана задача",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Указан корректный дедлайн",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Задача назначена на текущего пользователя",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Ответ подтверждает успешное действие",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 2,
+      "case_name": "Создание задачи другому пользователю",
+      "criteria_type": "must_include",
+      "sample_id": 2,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "задача создана",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "иван",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "проверить договор",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "сегодня",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 2,
+      "case_name": "Создание задачи другому пользователю",
+      "criteria_type": "must_not_include",
+      "sample_id": 2,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "на вас",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не могу",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не знаю",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 2,
+      "case_name": "Создание задачи другому пользователю",
+      "criteria_type": "success_criteria",
+      "sample_id": 2,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "Создана задача",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Задача назначена Ивану",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Указан дедлайн сегодня",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Ответ не утверждает, что задача назначена на текущего пользователя",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 3,
+      "case_name": "Поиск просроченных задач",
+      "criteria_type": "must_include",
+      "sample_id": 3,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "просроченные задачи",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "согласовать макет",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "обновить отчет",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 3,
+      "case_name": "Поиск просроченных задач",
+      "criteria_type": "must_not_include",
+      "sample_id": 3,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "задачи не найдены",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не знаю",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не могу",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 3,
+      "case_name": "Поиск просроченных задач",
+      "criteria_type": "success_criteria",
+      "sample_id": 3,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "Выполнен поиск задач",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Фильтр применен к задачам текущего пользователя",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Показаны только просроченные незавершенные задачи",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Ответ содержит найденные задачи",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 4,
+      "case_name": "Изменение статуса задачи",
+      "criteria_type": "must_include",
+      "sample_id": 4,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "задача обновлена",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "TASK-201",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "готово",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 4,
+      "case_name": "Изменение статуса задачи",
+      "criteria_type": "must_not_include",
+      "sample_id": 4,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "создана новая задача",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "не могу",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "уточните",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 4,
+      "case_name": "Изменение статуса задачи",
+      "criteria_type": "success_criteria",
+      "sample_id": 4,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "Вызван инструмент обновления задачи",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Обновлена именно задача TASK-201",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Статус изменен на готово",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Ответ подтверждает изменение статуса",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 5,
+      "case_name": "Неоднозначное создание задачи",
+      "criteria_type": "must_include",
+      "sample_id": 5,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "уточните",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "что нужно сделать",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "по отчету",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 5,
+      "case_name": "Неоднозначное создание задачи",
+      "criteria_type": "must_not_include",
+      "sample_id": 5,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "задача создана",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "готово",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "поставил задачу",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "case_id": 5,
+      "case_name": "Неоднозначное создание задачи",
+      "criteria_type": "success_criteria",
+      "sample_id": 5,
+      "run_time": "2026-06-22T18:31:00Z",
+      "results": [
+        {
+          "criterion": "Инструменты не вызваны",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Агент запросил уточнение",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Агент не создал задачу с неполными данными",
+          "is_success": true,
+          "reason": null
+        },
+        {
+          "criterion": "Ответ помогает пользователю конкретизировать задачу",
+          "is_success": true,
+          "reason": null
+        }
+      ]
+    }
+  ]
+}

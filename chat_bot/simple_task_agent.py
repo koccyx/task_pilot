@@ -49,9 +49,11 @@ class SimpleTaskAgent:
         self,
         llm: Any,
         rag_context_builder: Optional[AgentRagContextBuilder] = None,
+        allowed_tool_names: Optional[set[str]] = TASK_TOOL_NAMES,
     ) -> None:
         self.llm = llm
         self.rag_context_builder = rag_context_builder
+        self.allowed_tool_names = allowed_tool_names
 
     async def run(
         self,
@@ -66,9 +68,15 @@ class SimpleTaskAgent:
         started_at = time.perf_counter()
         history = (history or [])[-10:]
         user_profiles = user_profiles or []
-        selected_tools = [
-            tool for tool in tools if getattr(tool, "name", None) in TASK_TOOL_NAMES
-        ]
+        selected_tools = (
+            list(tools)
+            if self.allowed_tool_names is None
+            else [
+                tool
+                for tool in tools
+                if getattr(tool, "name", None) in self.allowed_tool_names
+            ]
+        )
         logger.info(
             "Simple task agent started",
             extra={
