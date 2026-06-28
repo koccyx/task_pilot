@@ -29,6 +29,7 @@ from pydantic import SecretStr
 # Import MessageFormatter
 from .formatter import MessageFormatter
 from .logging_config import get_logger, sanitize_for_logging
+from .metrics import record_ai_request
 from .models import (
     AIConfig,
     Message,
@@ -104,6 +105,11 @@ class Assistant:
         project = project or os.getenv("AI_PROJECT")
         temperature = temperature or float(os.getenv("AI_TEMPERATURE", "0.3"))
         max_tokens = max_tokens or int(os.getenv("AI_MAX_TOKENS", "500"))
+        light_model = os.getenv("AI_LIGHT_MODEL")
+        light_base_url = os.getenv("AI_LIGHT_BASE_URL")
+        light_api_key = os.getenv("AI_LIGHT_API_KEY")
+        light_temperature = float(os.getenv("AI_LIGHT_TEMPERATURE", "0.0"))
+        light_max_tokens = int(os.getenv("AI_LIGHT_MAX_TOKENS", str(max_tokens)))
 
         # Validate configuration using Pydantic model
         if not api_key:
@@ -118,11 +124,20 @@ class Assistant:
             project=project,
             temperature=temperature,
             max_tokens=max_tokens,
+            light_api_key=light_api_key,
+            light_model=light_model,
+            light_base_url=light_base_url,
+            light_temperature=light_temperature,
+            light_max_tokens=light_max_tokens,
         )
 
         # Initialize the AI chat model
         self._init_llm()
-        self.tool_router = ToolRouter(self.llm)
+        self._init_light_llm()
+        self.routing_llm = self.light_llm or self.llm
+        self.summary_llm = self.light_llm or self.llm
+        self.direct_answer_llm = self.light_llm or self.llm
+        self.tool_router = ToolRouter(self.routing_llm)
 
         # Load the prompt templates
         self._load_prompts()
@@ -234,6 +249,35 @@ class Assistant:
             logger.error(f"Failed to initialize AI model: {e}")
             raise
 
+    def _init_light_llm(self) -> None:
+        """Initialize optional lightweight model for routing and cheap tasks."""
+        self.light_llm = None
+        if not self.config.light_model:
+            logger.info("Light AI model is not configured; using main model")
+            return
+
+        try:
+            light_api_key = self.config.light_api_key or "ollama"
+            light_base_url = self.config.light_base_url or "http://localhost:11434/v1"
+            llm_kwargs: Dict[str, Any] = {
+                "api_key": SecretStr(light_api_key),
+                "model": self.config.light_model,
+                "temperature": self.config.light_temperature,
+                "base_url": light_base_url,
+                "max_completion_tokens": self.config.light_max_tokens,
+            }
+            self.light_llm = ChatOpenAI(**llm_kwargs)
+            logger.info(
+                "Initialized light AI model: %s (base_url: %s, temp: %s, max_tokens: %s)",
+                self.config.light_model,
+                light_base_url,
+                self.config.light_temperature,
+                self.config.light_max_tokens,
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize light AI model: {e}")
+            raise
+
     async def summarize(
         self, messages_input: Union[str, Dict[str, Any], MessagesData]
     ) -> SummaryResponse:
@@ -275,10 +319,29 @@ class Assistant:
             prompt = self.summary_prompt.format(messages=formatted_messages)
 
             # Create model with structured output
-            model_with_structure = self.llm.with_structured_output(SummaryOutput)
+            model_with_structure = self.summary_llm.with_structured_output(
+                SummaryOutput
+            )
 
             # Generate summary response using structured output
-            structured_output: SummaryOutput = await model_with_structure.ainvoke(prompt)  # type: ignore
+            ai_started_at = time.perf_counter()
+            try:
+                structured_output: SummaryOutput = await model_with_structure.ainvoke(prompt)  # type: ignore
+                record_ai_request(
+                    operation="summary",
+                    model=self._llm_model_name(self.summary_llm),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=structured_output,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="summary",
+                    model=self._llm_model_name(self.summary_llm),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
 
             processing_time = time.time() - start_time
             logger.info("Successfully generated summary")
@@ -357,7 +420,24 @@ class Assistant:
             model_with_structure = self.llm.with_structured_output(TaskExtractionOutput)
 
             # Generate task extraction response using structured output
-            structured_output: TaskExtractionOutput = await model_with_structure.ainvoke(prompt)  # type: ignore
+            ai_started_at = time.perf_counter()
+            try:
+                structured_output: TaskExtractionOutput = await model_with_structure.ainvoke(prompt)  # type: ignore
+                record_ai_request(
+                    operation="task_extraction",
+                    model=self.config.model,
+                    status="success",
+                    started_at=ai_started_at,
+                    response=structured_output,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="task_extraction",
+                    model=self.config.model,
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
 
             processing_time = time.time() - start_time
             logger.info(f"Successfully extracted {len(structured_output.tasks)} tasks")
@@ -438,7 +518,10 @@ class Assistant:
             if not msg.is_bot_message:
                 selected.append(msg)
                 continue
-            if msg.message_id in referenced_bot_ids or msg.message_id == latest_bot_message_id:
+            if (
+                msg.message_id in referenced_bot_ids
+                or msg.message_id == latest_bot_message_id
+            ):
                 selected.append(msg)
 
         return selected
@@ -608,9 +691,9 @@ class Assistant:
             # Extract final response from messages
             result_messages: List[BaseMessage] = result.get("messages", [])
             self._log_agent_trace(result_messages)
-            final_content = result.get("final_response", "") or self._extract_final_content(
-                result_messages
-            )
+            final_content = result.get(
+                "final_response", ""
+            ) or self._extract_final_content(result_messages)
 
             processing_time = time.time() - start_time
             logger.info(
@@ -638,7 +721,9 @@ class Assistant:
 
         async def route_request(state: AgentGraphState) -> AgentGraphState:
             message_text = self._extract_last_human_message(state["messages"])
-            history_text = self._format_messages_for_orchestrator(state["messages"][:-1])
+            history_text = self._format_messages_for_orchestrator(
+                state["messages"][:-1]
+            )
             decision = await self.tool_router.orchestrate(
                 message=message_text,
                 history=history_text,
@@ -675,9 +760,7 @@ class Assistant:
                     "history_excerpt": sanitize_for_logging(
                         history_text, max_length=1000
                     ),
-                    "message_text": sanitize_for_logging(
-                        message_text, max_length=300
-                    ),
+                    "message_text": sanitize_for_logging(message_text, max_length=300),
                 },
             )
 
@@ -700,10 +783,32 @@ class Assistant:
             }
 
         async def direct_answer(state: AgentGraphState) -> AgentGraphState:
-            response = await self.llm.ainvoke(
-                [SystemMessage(content=self._build_system_prompt(system_prompt, state))]
-                + state["messages"]
-            )
+            direct_llm = getattr(self, "direct_answer_llm", self.llm)
+            ai_started_at = time.perf_counter()
+            try:
+                response = await direct_llm.ainvoke(
+                    [
+                        SystemMessage(
+                            content=self._build_system_prompt(system_prompt, state)
+                        )
+                    ]
+                    + state["messages"]
+                )
+                record_ai_request(
+                    operation="chat_direct_answer",
+                    model=self._llm_model_name(direct_llm),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=response,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="chat_direct_answer",
+                    model=self._llm_model_name(direct_llm),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
             content = getattr(response, "content", "")
             return {
                 "messages": [response],
@@ -716,10 +821,31 @@ class Assistant:
                 tool_names=state.get("selected_tool_names", []),
             )
             model = self.llm.bind_tools(selected_tools)
-            response = await model.ainvoke(
-                [SystemMessage(content=self._build_system_prompt(system_prompt, state))]
-                + state["messages"]
-            )
+            ai_started_at = time.perf_counter()
+            try:
+                response = await model.ainvoke(
+                    [
+                        SystemMessage(
+                            content=self._build_system_prompt(system_prompt, state)
+                        )
+                    ]
+                    + state["messages"]
+                )
+                record_ai_request(
+                    operation="chat_agent_step",
+                    model=getattr(getattr(self, "config", None), "model", None),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=response,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="chat_agent_step",
+                    model=getattr(getattr(self, "config", None), "model", None),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
             return {
                 "messages": [response],
                 "tool_validation_failed": False,
@@ -755,9 +881,9 @@ class Assistant:
             return {"tool_validation_failed": False}
 
         def finalize(state: AgentGraphState) -> AgentGraphState:
-            final_content = state.get("final_response", "") or self._extract_final_content(
-                state["messages"]
-            )
+            final_content = state.get(
+                "final_response", ""
+            ) or self._extract_final_content(state["messages"])
             return {"final_response": final_content}
 
         def route_after_router(state: AgentGraphState) -> str:
@@ -819,9 +945,7 @@ class Assistant:
 
         return graph.compile()
 
-    def _build_system_prompt(
-        self, base_prompt: str, state: AgentGraphState
-    ) -> str:
+    def _build_system_prompt(self, base_prompt: str, state: AgentGraphState) -> str:
         """Extend the base prompt with route-specific execution context."""
         route = state.get("route", "")
         prompt = base_prompt
@@ -843,6 +967,11 @@ class Assistant:
         """Keep tools in original order while applying a whitelist."""
         allowed = set(tool_names)
         return [tool for tool in tools if getattr(tool, "name", None) in allowed]
+
+    @staticmethod
+    def _llm_model_name(llm: Any) -> str | None:
+        """Return a provider model name from a LangChain chat model."""
+        return getattr(llm, "model_name", None) or getattr(llm, "model", None)
 
     @staticmethod
     def _extract_last_human_message(messages: List[BaseMessage]) -> str:

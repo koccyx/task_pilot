@@ -48,7 +48,10 @@ class MCPHandler:
             mcp_config: MCP client configuration (uses defaults if not provided).
         """
         self.assistant = assistant
-        self.task_agent = SimpleTaskAgent(llm=assistant.llm)
+        self.task_agent = SimpleTaskAgent(
+            llm=assistant.llm,
+            routing_llm=getattr(assistant, "routing_llm", assistant.llm),
+        )
 
         # Read configuration from environment if not provided
         if mcp_config is None:

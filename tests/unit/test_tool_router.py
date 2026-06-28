@@ -31,7 +31,9 @@ class TestToolRouter:
             "manage_members",
         ]
 
-    def test_select_tools_for_workspace_setup_excludes_non_workspace_tools(self) -> None:
+    def test_select_tools_for_workspace_setup_excludes_non_workspace_tools(
+        self,
+    ) -> None:
         """Workspace setup route should expose only board/space setup tools."""
         router = ToolRouter(llm=MagicMock())
         tools = [
@@ -87,7 +89,9 @@ class TestToolRouter:
         assert decision.route == "card_operations"
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_recovers_board_summary_from_history(self) -> None:
+    async def test_heuristic_orchestrate_recovers_board_summary_from_history(
+        self,
+    ) -> None:
         """Orchestrator fallback should reuse resolved board from prior clarification."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -114,7 +118,9 @@ class TestToolRouter:
         assert plan.needs_clarification is False
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_ignores_assistant_question_as_entity_name(self) -> None:
+    async def test_heuristic_orchestrate_ignores_assistant_question_as_entity_name(
+        self,
+    ) -> None:
         """Assistant clarification text must not be mistaken for a board name."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -133,7 +139,9 @@ class TestToolRouter:
         assert plan.needs_clarification is True
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_recovers_board_from_demonstrative_reference(self) -> None:
+    async def test_heuristic_orchestrate_recovers_board_from_demonstrative_reference(
+        self,
+    ) -> None:
         """Fallback should resolve 'эта доска' to the last user-provided board."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -158,7 +166,9 @@ class TestToolRouter:
         assert plan.needs_clarification is False
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_prefers_card_operations_for_column_move_requests(self) -> None:
+    async def test_heuristic_orchestrate_prefers_card_operations_for_column_move_requests(
+        self,
+    ) -> None:
         """Create/move requests around columns must not be routed into reporting."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -180,7 +190,9 @@ class TestToolRouter:
         assert plan.user_goal in {"create_or_update", "update"}
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_routes_board_sync_from_dialog_to_workspace(self) -> None:
+    async def test_heuristic_orchestrate_routes_board_sync_from_dialog_to_workspace(
+        self,
+    ) -> None:
         """Dialog-driven board updates should stay in a mutating route."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -207,7 +219,9 @@ class TestToolRouter:
         assert plan.needs_clarification is False
 
     @pytest.mark.asyncio
-    async def test_heuristic_orchestrate_routes_card_sync_from_dialog_to_card_operations(self) -> None:
+    async def test_heuristic_orchestrate_routes_card_sync_from_dialog_to_card_operations(
+        self,
+    ) -> None:
         """Dialog-driven card updates should not fall back to general assistant."""
         llm = MagicMock()
         llm.with_structured_output.side_effect = RuntimeError("router unavailable")
@@ -234,7 +248,9 @@ class TestToolRouter:
         assert plan.entity_name == "onboarding"
         assert plan.needs_clarification is False
 
-    def test_select_tools_for_card_operations_includes_columns_for_mixed_request(self) -> None:
+    def test_select_tools_for_card_operations_includes_columns_for_mixed_request(
+        self,
+    ) -> None:
         """Card operations route must allow mixed column + card execution."""
         router = ToolRouter(llm=MagicMock())
         tools = [
@@ -275,7 +291,9 @@ class TestAssistantToolGating:
         return assistant
 
     @pytest.mark.asyncio
-    async def test_chat_with_tools_runs_langgraph_and_returns_final_response(self) -> None:
+    async def test_chat_with_tools_runs_langgraph_and_returns_final_response(
+        self,
+    ) -> None:
         """chat_with_tools should invoke compiled graph and return final output."""
         assistant = self._make_assistant()
         fake_graph = MagicMock()
@@ -286,7 +304,9 @@ class TestAssistantToolGating:
             }
         )
 
-        with patch.object(assistant, "_build_chat_graph", return_value=fake_graph) as build_graph:
+        with patch.object(
+            assistant, "_build_chat_graph", return_value=fake_graph
+        ) as build_graph:
             result = await assistant.chat_with_tools(
                 message="создай задачу и назначь ответственного",
                 tools=[SimpleNamespace(name="manage_cards")],
@@ -307,10 +327,15 @@ class TestAssistantToolGating:
             }
         )
 
-        with patch.object(assistant, "_build_chat_graph", return_value=fake_graph) as build_graph, patch(
-            "chat_bot.assistant.load_relevant_scenarios",
-            return_value="\n\n## 📋 Релевантные сценарии\nscenario",
-        ) as load_relevant:
+        with (
+            patch.object(
+                assistant, "_build_chat_graph", return_value=fake_graph
+            ) as build_graph,
+            patch(
+                "chat_bot.assistant.load_relevant_scenarios",
+                return_value="\n\n## 📋 Релевантные сценарии\nscenario",
+            ) as load_relevant,
+        ):
             await assistant.chat_with_tools(
                 message="создай доску продаж и добавь колонки",
                 tools=[SimpleNamespace(name="manage_boards")],
@@ -344,8 +369,9 @@ class TestAssistantToolGating:
             for index in range(1, 6)
         ]
 
-        with patch.object(assistant, "_build_chat_graph", return_value=fake_graph), patch.dict(
-            os.environ, {"AGENT_HISTORY_MESSAGE_LIMIT": "2"}
+        with (
+            patch.object(assistant, "_build_chat_graph", return_value=fake_graph),
+            patch.dict(os.environ, {"AGENT_HISTORY_MESSAGE_LIMIT": "2"}),
         ):
             await assistant.chat_with_tools(
                 message="покажи задачи",
@@ -411,7 +437,11 @@ class TestAssistantToolGating:
         assistant.tool_router.select_tools = MagicMock(return_value=[])
         assistant.tool_router.build_executor_context = MagicMock(return_value="")
         assistant.tool_router.build_worker_context = MagicMock(return_value="")
-        assistant.llm.ainvoke = AsyncMock(return_value=AIMessage(content="Ответ без тулов"))
+        assistant.direct_answer_llm = MagicMock()
+        assistant.direct_answer_llm.ainvoke = AsyncMock(
+            return_value=AIMessage(content="Ответ без тулов")
+        )
+        assistant.llm.ainvoke = AsyncMock()
 
         graph = assistant._build_chat_graph(
             tools=[self._dummy_tool("manage_boards")],
@@ -419,7 +449,9 @@ class TestAssistantToolGating:
         )
         result = await graph.ainvoke(
             {
-                "messages": [HumanMessage(content="объясни разницу между доской и пространством")],
+                "messages": [
+                    HumanMessage(content="объясни разницу между доской и пространством")
+                ],
                 "route": "",
                 "requires_tool": False,
                 "route_confidence": 0.0,
@@ -437,3 +469,5 @@ class TestAssistantToolGating:
         )
 
         assert result["final_response"] == "Ответ без тулов"
+        assistant.direct_answer_llm.ainvoke.assert_awaited_once()
+        assistant.llm.ainvoke.assert_not_awaited()

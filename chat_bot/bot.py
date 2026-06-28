@@ -34,6 +34,7 @@ from .commands.registry import CommandRegistry
 from .formatter import MessageFormatter
 from .handlers import MessageRouter
 from .healthcheck import HealthCheckServer
+from .metrics import track_user_request_async
 from .models import (
     BotConfig,
     Message,
@@ -109,15 +110,9 @@ class ChatLoggerBot:
 
         # Add command handlers first (higher priority)
         # Important: menu and help must be registered before other commands
-        self.application.add_handler(
-            CommandHandler("start", self.handle_start_command)
-        )
-        self.application.add_handler(
-            CommandHandler("menu", self.handle_menu_command)
-        )
-        self.application.add_handler(
-            CommandHandler("help", self.handle_help_command)
-        )
+        self.application.add_handler(CommandHandler("start", self.handle_start_command))
+        self.application.add_handler(CommandHandler("menu", self.handle_menu_command))
+        self.application.add_handler(CommandHandler("help", self.handle_help_command))
         self.application.add_handler(
             CommandHandler("summary", self.handle_summary_command)
         )
@@ -371,7 +366,16 @@ class ChatLoggerBot:
                     if profile is None:
                         return
 
-                response = await self.message_router.route(update, context)
+                async with track_user_request_async(
+                    operation="telegram_message",
+                    model=self.assistant.config.model,
+                    chat_id=chat_id,
+                    telegram_user_id=user_id,
+                    telegram_username=username,
+                    message_id=message.message_id,
+                    on_complete=self.repository.save_ai_user_request_metric,
+                ):
+                    response = await self.message_router.route(update, context)
                 if response:
                     sent_message = await self.send_route_result(
                         update.message, response
@@ -407,7 +411,20 @@ class ChatLoggerBot:
                 if profile is None:
                     return
 
-            response = await self.message_router.route(update, context)
+            user = message.from_user
+            user_id = user.id if user else None
+            username = user.username if user else None
+
+            async with track_user_request_async(
+                operation="telegram_command",
+                model=self.assistant.config.model,
+                chat_id=message.chat.id if message.chat else None,
+                telegram_user_id=user_id,
+                telegram_username=username,
+                message_id=message.message_id,
+                on_complete=self.repository.save_ai_user_request_metric,
+            ):
+                response = await self.message_router.route(update, context)
             if response:
                 await self.send_route_result(message, response)
 
@@ -502,11 +519,11 @@ class ChatLoggerBot:
                         "• 🏷️ Работа с тегами\n"
                         "• ⏱️ Учет времени\n\n"
                         "**Примеры запросов:**\n"
-                        "• \"Покажи все карточки на доске Marketing\"\n"
+                        '• "Покажи все карточки на доске Marketing"\n'
                         "• \"Создай карточку 'Новая задача' на доске Marketing\"\n"
-                        "• \"Назначь Ивана ответственным за карточку #123\"\n"
-                        "• \"Покажи список пользователей\"\n"
-                        "• \"Какие доски есть в пространстве Development?\"\n\n"
+                        '• "Назначь Ивана ответственным за карточку #123"\n'
+                        '• "Покажи список пользователей"\n'
+                        '• "Какие доски есть в пространстве Development?"\n\n'
                         "💡 **Совет:** Используйте меню (/menu) для быстрого доступа к основным функциям!"
                     )
                     await self.send_formatted_message(query.message, help_text)
@@ -536,12 +553,21 @@ class ChatLoggerBot:
                         )
                         return
 
-                response = await self.message_router.mcp_handler.handle(
-                    text=request_text,
+                async with track_user_request_async(
+                    operation="menu_callback",
+                    model=self.assistant.config.model,
                     chat_id=chat_id,
-                    user_id=user_id,
-                    username=username,
-                )
+                    telegram_user_id=user_id,
+                    telegram_username=username,
+                    message_id=getattr(query.message, "message_id", None),
+                    on_complete=self.repository.save_ai_user_request_metric,
+                ):
+                    response = await self.message_router.mcp_handler.handle(
+                        text=request_text,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        username=username,
+                    )
                 await self.send_formatted_message(query.message, response)
             else:
                 await query.message.reply_text(
@@ -574,7 +600,9 @@ class ChatLoggerBot:
             keyboard = [
                 [
                     InlineKeyboardButton("👥 Пользователи", callback_data="menu_users"),
-                    InlineKeyboardButton("🏢 Пространства", callback_data="menu_spaces"),
+                    InlineKeyboardButton(
+                        "🏢 Пространства", callback_data="menu_spaces"
+                    ),
                 ],
                 [
                     InlineKeyboardButton("📋 Карточки", callback_data="menu_cards"),
@@ -597,9 +625,7 @@ class ChatLoggerBot:
             )
 
             logger.debug(f"Sending menu with {len(keyboard)} rows of buttons")
-            await update.message.reply_text(
-                menu_text, reply_markup=reply_markup
-            )
+            await update.message.reply_text(menu_text, reply_markup=reply_markup)
             logger.info("Menu sent successfully")
 
         except Exception as e:
@@ -630,7 +656,19 @@ class ChatLoggerBot:
                 # Use AI Assistant for intelligent summarization
                 try:
                     logger.info("Generating AI-powered summary...")
-                    summary_response = await self.assistant.summarize(today_data)
+                    user = update.message.from_user if update.message else None
+                    async with track_user_request_async(
+                        operation="summary_command",
+                        model=self.assistant.config.model,
+                        chat_id=chat_id,
+                        telegram_user_id=user.id if user else None,
+                        telegram_username=user.username if user else None,
+                        message_id=(
+                            update.message.message_id if update.message else None
+                        ),
+                        on_complete=self.repository.save_ai_user_request_metric,
+                    ):
+                        summary_response = await self.assistant.summarize(today_data)
                     if summary_response.success:
                         response = summary_response.summary
                         logger.info("AI summary generated successfully")
@@ -693,7 +731,19 @@ class ChatLoggerBot:
                 # Use AI Assistant for task extraction
                 try:
                     logger.info("Extracting tasks from messages...")
-                    tasks_response = await self.assistant.extract_tasks(today_data)
+                    user = update.message.from_user if update.message else None
+                    async with track_user_request_async(
+                        operation="tasks_command",
+                        model=self.assistant.config.model,
+                        chat_id=chat_id,
+                        telegram_user_id=user.id if user else None,
+                        telegram_username=user.username if user else None,
+                        message_id=(
+                            update.message.message_id if update.message else None
+                        ),
+                        on_complete=self.repository.save_ai_user_request_metric,
+                    ):
+                        tasks_response = await self.assistant.extract_tasks(today_data)
                     if tasks_response.success:
                         if tasks_response.tasks:
                             response = "📋 **Извлеченные задачи:**\n\n"

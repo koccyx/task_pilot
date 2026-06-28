@@ -15,6 +15,7 @@
    - `TELEGRAM_BOT_USERNAME`
    - `AI_API_KEY`
    - `AI_MODEL`
+   - `AI_LIGHT_MODEL` — опциональная легкая модель для роутинга, RAG gate и коротких сводок; по умолчанию в `env.example` используется Ollama `qwen3:8b`
    - `KAITEN_API_URL`
    - `KAITEN_API_TOKEN`
    - при необходимости поменяйте `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
@@ -50,6 +51,11 @@ docker compose up --build
 
 RAG-сервисы `qdrant` и `rag-web` запускаются отдельно через profile `embeddings`;
 эмбеддинги запрашиваются у локальной Ollama на хосте.
+Легкая LLM для роутинга тоже может работать через локальную Ollama:
+
+```bash
+ollama pull qwen3:8b
+```
 
 Перед первой нормальной работой пользователь должен представиться:
 

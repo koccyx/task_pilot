@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 import asyncpg
 from asyncpg import Pool, Record
 
+from .metrics import RequestMetric
 from .models import Message, MessagesData, PostgresConfig, UserProfile
 from .repository_base import BaseChatRepository
 
@@ -46,8 +47,7 @@ class ChatRepository(BaseChatRepository):
             raise RuntimeError("PostgreSQL pool is not initialized")
 
         async with pool.acquire() as conn:
-            await conn.execute(
-                """
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS chat_messages (
                     id BIGSERIAL PRIMARY KEY,
                     chat_id BIGINT NOT NULL,
@@ -84,8 +84,44 @@ class ChatRepository(BaseChatRepository):
 
                 ALTER TABLE user_profiles
                 ADD COLUMN IF NOT EXISTS kaiten_user_id BIGINT;
-                """
-            )
+
+                CREATE TABLE IF NOT EXISTS ai_user_request_metrics (
+                    request_id TEXT PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    chat_id BIGINT,
+                    telegram_user_id BIGINT,
+                    telegram_username TEXT,
+                    message_id BIGINT,
+                    operation TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    duration_ms DOUBLE PRECISION NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_created_at
+                ON ai_user_request_metrics (created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_chat_created_at
+                ON ai_user_request_metrics (chat_id, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_operation_created_at
+                ON ai_user_request_metrics (operation, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_model_created_at
+                ON ai_user_request_metrics (model, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_user_created_at
+                ON ai_user_request_metrics (telegram_user_id, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_status_created_at
+                ON ai_user_request_metrics (status, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_user_request_metrics_total_tokens
+                ON ai_user_request_metrics (total_tokens DESC);
+                """)
         self._schema_ready = True
 
     @staticmethod
@@ -326,6 +362,48 @@ class ChatRepository(BaseChatRepository):
                 chat_id,
             )
         return [self._profile_from_record(row) for row in rows]
+
+    async def save_ai_user_request_metric(self, metric: RequestMetric) -> None:
+        """Persist an aggregated AI metric for one user request."""
+        pool = await self._get_pool()
+        created_at = datetime.fromtimestamp(metric.timestamp_seconds, tz=timezone.utc)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO ai_user_request_metrics (
+                    request_id, created_at, chat_id, telegram_user_id,
+                    telegram_username, message_id, operation, model, status,
+                    prompt_tokens, completion_tokens, total_tokens, duration_ms
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                ON CONFLICT (request_id) DO UPDATE SET
+                    created_at = EXCLUDED.created_at,
+                    chat_id = EXCLUDED.chat_id,
+                    telegram_user_id = EXCLUDED.telegram_user_id,
+                    telegram_username = EXCLUDED.telegram_username,
+                    message_id = EXCLUDED.message_id,
+                    operation = EXCLUDED.operation,
+                    model = EXCLUDED.model,
+                    status = EXCLUDED.status,
+                    prompt_tokens = EXCLUDED.prompt_tokens,
+                    completion_tokens = EXCLUDED.completion_tokens,
+                    total_tokens = EXCLUDED.total_tokens,
+                    duration_ms = EXCLUDED.duration_ms
+                """,
+                metric.request_id,
+                created_at,
+                metric.chat_id,
+                metric.telegram_user_id,
+                metric.telegram_username,
+                metric.message_id,
+                metric.operation,
+                metric.model,
+                metric.status,
+                metric.prompt_tokens,
+                metric.completion_tokens,
+                metric.total_tokens,
+                round(metric.duration_seconds * 1000, 2),
+            )
 
     async def close(self) -> None:
         """Close the connection pool."""

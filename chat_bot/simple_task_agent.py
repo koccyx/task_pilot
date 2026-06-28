@@ -20,6 +20,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from .logging_config import get_logger, sanitize_for_logging
+from .metrics import record_ai_request
 from .models import Message, UserProfile
 from .rag.agent_context import AgentRagContextBuilder
 
@@ -48,10 +49,12 @@ class SimpleTaskAgent:
     def __init__(
         self,
         llm: Any,
+        routing_llm: Any | None = None,
         rag_context_builder: Optional[AgentRagContextBuilder] = None,
         allowed_tool_names: Optional[set[str]] = TASK_TOOL_NAMES,
     ) -> None:
         self.llm = llm
+        self.routing_llm = routing_llm or llm
         self.rag_context_builder = rag_context_builder
         self.allowed_tool_names = allowed_tool_names
 
@@ -154,7 +157,7 @@ class SimpleTaskAgent:
 
         builder = self.rag_context_builder
         if builder is None:
-            builder = AgentRagContextBuilder(llm=self.llm)
+            builder = AgentRagContextBuilder(llm=self.routing_llm)
             self.rag_context_builder = builder
 
         context = await builder.build_context(message=message, history=history)
@@ -165,9 +168,28 @@ class SimpleTaskAgent:
         tool_node = ToolNode(tools=tools, handle_tool_errors=True)
 
         async def agent_step(state: TaskAgentState) -> TaskAgentState:
-            response = await self.llm.bind_tools(tools).ainvoke(
-                [SystemMessage(content=system_prompt)] + state["messages"]
-            )
+            ai_started_at = time.perf_counter()
+            try:
+                response = await self.llm.bind_tools(tools).ainvoke(
+                    [SystemMessage(content=system_prompt)] + state["messages"]
+                )
+                record_ai_request(
+                    operation="simple_task_agent_step",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=response,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="simple_task_agent_step",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
             logger.info(
                 "Simple task agent step",
                 extra={

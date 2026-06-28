@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Dict
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import PlainTextResponse
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,16 @@ class HealthCheckServer:
                 "service": "telegram-chat-logger-bot",
             }
 
+        @app.get("/metrics", response_class=PlainTextResponse)
+        async def metrics() -> PlainTextResponse:
+            """Prometheus-compatible application metrics."""
+            from .metrics import render_prometheus_metrics
+
+            return PlainTextResponse(
+                render_prometheus_metrics(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
+
         @app.get("/")
         async def root() -> Dict[str, Any]:
             """Root endpoint with service information."""
@@ -92,6 +102,7 @@ class HealthCheckServer:
                     "health": "/health",
                     "readiness": "/health/ready",
                     "liveness": "/health/live",
+                    "metrics": "/metrics",
                 },
             }
 

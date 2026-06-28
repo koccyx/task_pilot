@@ -93,6 +93,56 @@ services:
       - postgres
       - qdrant
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: task_pilot-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    networks:
+      - task_pilot-network
+    depends_on:
+      - telegram-bot
+
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: task_pilot-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    networks:
+      - task_pilot-network
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: task_pilot-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - POSTGRES_DB=${POSTGRES_DB:-task_pilot}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - task_pilot-network
+    depends_on:
+      - prometheus
+      - loki
+      - postgres
+
 networks:
   task_pilot-network:
     driver: bridge
@@ -100,3 +150,5 @@ networks:
 volumes:
   postgres_data:
   qdrant_data:
+  prometheus_data:
+  grafana_data:

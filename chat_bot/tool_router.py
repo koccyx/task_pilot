@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import re
 from dataclasses import dataclass
 from textwrap import dedent
@@ -11,6 +12,7 @@ from typing import Any, Iterable, List, Optional
 from pydantic import BaseModel, Field
 
 from .logging_config import sanitize_for_logging
+from .metrics import record_ai_request
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +38,7 @@ class WorkerProfile:
 ROUTES: tuple[ToolRoute, ...] = (
     ToolRoute(
         route="reporting",
-        description=(
-            "Сводки, статусы и отчёты по доскам, задачам и команде."
-        ),
+        description=("Сводки, статусы и отчёты по доскам, задачам и команде."),
         tool_names=(
             "manage_boards",
             "manage_cards",
@@ -124,14 +124,12 @@ WORKERS: tuple[WorkerProfile, ...] = (
         routes=("general_assistant",),
     ),
 )
-WORKERS_BY_NAME: dict[str, WorkerProfile] = {worker.worker: worker for worker in WORKERS}
+WORKERS_BY_NAME: dict[str, WorkerProfile] = {
+    worker.worker: worker for worker in WORKERS
+}
 DEFAULT_WORKER_BY_ROUTE: dict[str, str] = {
     route.route: next(
-        (
-            worker.worker
-            for worker in WORKERS
-            if route.route in worker.routes
-        ),
+        (worker.worker for worker in WORKERS if route.route in worker.routes),
         "general_worker",
     )
     for route in ROUTES
@@ -221,7 +219,26 @@ class ToolRouter:
                 available_routes=available_routes,
                 available_tool_names=available_tool_names,
             )
-            decision: RouteDecision = await model.ainvoke(prompt)  # type: ignore[assignment]
+            ai_started_at = time.perf_counter()
+            try:
+                decision: RouteDecision = await model.ainvoke(prompt)  # type: ignore[assignment]
+                record_ai_request(
+                    operation="tool_route",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=decision,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="tool_route",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
             normalized = self._normalize_decision(decision, available_routes)
             logger.info(
                 "Tool routing via LLM: route=%s confidence=%.2f",
@@ -231,7 +248,9 @@ class ToolRouter:
             return normalized
         except Exception as exc:
             logger.warning("Tool routing fallback engaged: %s", exc)
-            return self._heuristic_route(message=message, available_routes=available_routes)
+            return self._heuristic_route(
+                message=message, available_routes=available_routes
+            )
 
     async def orchestrate(
         self,
@@ -271,8 +290,29 @@ class ToolRouter:
                 available_routes=available_routes,
                 available_tool_names=available_tool_names,
             )
-            plan: OrchestratorPlan = await model.ainvoke(prompt)  # type: ignore[assignment]
-            normalized = self._normalize_orchestrator_plan(plan, available_routes, message)
+            ai_started_at = time.perf_counter()
+            try:
+                plan: OrchestratorPlan = await model.ainvoke(prompt)  # type: ignore[assignment]
+                record_ai_request(
+                    operation="tool_orchestrate",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="success",
+                    started_at=ai_started_at,
+                    response=plan,
+                )
+            except Exception:
+                record_ai_request(
+                    operation="tool_orchestrate",
+                    model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                    status="error",
+                    started_at=ai_started_at,
+                )
+                raise
+            normalized = self._normalize_orchestrator_plan(
+                plan, available_routes, message
+            )
             self._log_orchestrator_plan(normalized, source="llm")
             return normalized
         except Exception as exc:
@@ -338,7 +378,9 @@ class ToolRouter:
         """Provide worker-specific execution context."""
         worker_profile = WORKERS_BY_NAME.get(worker)
         worker_description = (
-            worker_profile.description if worker_profile else "Исполняет нормализованную задачу."
+            worker_profile.description
+            if worker_profile
+            else "Исполняет нормализованную задачу."
         )
         entity_line = entity_type or "не указан"
         if entity_name:
@@ -364,7 +406,9 @@ class ToolRouter:
         available_routes: Iterable[ToolRoute],
     ) -> RouteDecision:
         available_names = {route.route for route in available_routes}
-        route = decision.route if decision.route in available_names else "general_assistant"
+        route = (
+            decision.route if decision.route in available_names else "general_assistant"
+        )
         if route == "general_assistant":
             return RouteDecision(
                 route=route,
@@ -388,7 +432,10 @@ class ToolRouter:
         available_names = {route.route for route in available_routes}
         route = plan.route if plan.route in available_names else "general_assistant"
         worker = DEFAULT_WORKER_BY_ROUTE.get(route, "general_worker")
-        if plan.worker in WORKERS_BY_NAME and route in WORKERS_BY_NAME[plan.worker].routes:
+        if (
+            plan.worker in WORKERS_BY_NAME
+            and route in WORKERS_BY_NAME[plan.worker].routes
+        ):
             worker = plan.worker
 
         needs_clarification = plan.needs_clarification or bool(plan.missing_fields)
@@ -437,8 +484,7 @@ class ToolRouter:
             f"- {route.route}: {route.description}" for route in available_routes
         )
         tools_text = ", ".join(available_tool_names) if available_tool_names else "нет"
-        return dedent(
-            f"""
+        return dedent(f"""
             Ты маршрутизатор запросов для task_pilot.
             Твоя задача: выбрать ОДИН маршрут, определить нужен ли вызов инструмента
             и стоит ли сначала запросить уточнение.
@@ -463,8 +509,7 @@ class ToolRouter:
 
             Запрос пользователя:
             {message}
-            """
-        ).strip()
+            """).strip()
 
     def _build_orchestrator_prompt(
         self,
@@ -480,8 +525,7 @@ class ToolRouter:
         workers_text = "\n".join(
             f"- {worker.worker}: {worker.description}" for worker in WORKERS
         )
-        return dedent(
-            f"""
+        return dedent(f"""
             Ты главный агент-оркестратор task_pilot.
             Твоя задача:
             1. Понять намерение пользователя из текущего сообщения И истории диалога.
@@ -511,8 +555,7 @@ class ToolRouter:
 
             Текущее сообщение пользователя:
             {message}
-            """
-        ).strip()
+            """).strip()
 
     def _heuristic_route(
         self,
@@ -522,9 +565,9 @@ class ToolRouter:
         text = message.lower()
         available_names = {route.route for route in available_routes}
 
-        if (
-            "workspace_setup" in available_names
-            and any(keyword in text for keyword in ("создай доску", "сделай доску", "настрой доску"))
+        if "workspace_setup" in available_names and any(
+            keyword in text
+            for keyword in ("создай доску", "сделай доску", "настрой доску")
         ):
             return RouteDecision(
                 route="workspace_setup",
@@ -600,7 +643,9 @@ class ToolRouter:
         )
 
         for route_name, keywords in keyword_map:
-            if route_name in available_names and any(keyword in text for keyword in keywords):
+            if route_name in available_names and any(
+                keyword in text for keyword in keywords
+            ):
                 return RouteDecision(
                     route=route_name,
                     confidence=0.62,
@@ -637,7 +682,9 @@ class ToolRouter:
         combined_user = f"{user_history}\n{message}".strip()
         text = combined.lower()
         user_text = combined_user.lower()
-        route_decision = self._heuristic_route(message=combined, available_routes=available_routes)
+        route_decision = self._heuristic_route(
+            message=combined, available_routes=available_routes
+        )
         user_goal = self._infer_goal(user_text)
         message_entity_type = self._infer_entity_type(message.lower())
         history_entity_type = self._infer_entity_type(user_history.lower())
@@ -658,11 +705,16 @@ class ToolRouter:
             missing_fields.append("entity_type")
             needs_clarification = True
             clarification_question = "Какую доску или карточку вы хотите сводку?"
-        elif user_goal == "summary" and entity_name is None and entity_type in {
-            "board",
-            "card",
-            "space",
-        }:
+        elif (
+            user_goal == "summary"
+            and entity_name is None
+            and entity_type
+            in {
+                "board",
+                "card",
+                "space",
+            }
+        ):
             missing_fields.append("entity_name")
             needs_clarification = True
             clarification_question = self._default_clarification_question(
@@ -672,7 +724,9 @@ class ToolRouter:
             )
 
         route = route_decision.route
-        if user_goal == "summary" and "reporting" in {r.route for r in available_routes}:
+        if user_goal == "summary" and "reporting" in {
+            r.route for r in available_routes
+        }:
             route = "reporting"
         elif user_goal in {"create_or_update", "update"} and route in {
             "general_assistant",
@@ -699,7 +753,10 @@ class ToolRouter:
                 and not has_card_operation_hint
             ):
                 route = "workspace_setup"
-            elif entity_type in {"card", "user"} and "card_operations" in available_route_names:
+            elif (
+                entity_type in {"card", "user"}
+                and "card_operations" in available_route_names
+            ):
                 route = "card_operations"
 
         worker = DEFAULT_WORKER_BY_ROUTE.get(route, "general_worker")
@@ -743,13 +800,20 @@ class ToolRouter:
         if "entity_name" in missing_fields and entity_type == "card":
             return "По какой карточке нужна сводка?"
         if user_goal == "summary":
-            return "Какую доску, карточку или пространство нужно использовать для сводки?"
+            return (
+                "Какую доску, карточку или пространство нужно использовать для сводки?"
+            )
         return "Что именно нужно уточнить, чтобы безопасно выполнить ваш запрос?"
 
     def _infer_goal(self, text: str) -> str:
-        if any(keyword in text for keyword in ("сводк", "summary", "отч", "статус", "status")):
+        if any(
+            keyword in text
+            for keyword in ("сводк", "summary", "отч", "статус", "status")
+        ):
             return "summary"
-        if any(keyword in text for keyword in ("разбей", "декомпоз", "подзада", "эпик")):
+        if any(
+            keyword in text for keyword in ("разбей", "декомпоз", "подзада", "эпик")
+        ):
             return "breakdown"
         if any(
             keyword in text
@@ -795,13 +859,17 @@ class ToolRouter:
 
     def _infer_entity_name(self, text: str, entity_type: str | None) -> str | None:
         if entity_type == "board":
-            return self._extract_name_after_keyword(text, ("доске", "доску", "доска", "board"))
+            return self._extract_name_after_keyword(
+                text, ("доске", "доску", "доска", "board")
+            )
         if entity_type == "card":
             return self._extract_name_after_keyword(
                 text, ("карточке", "карточку", "карточка", "задаче", "задачу", "задача")
             )
         if entity_type == "space":
-            return self._extract_name_after_keyword(text, ("пространстве", "пространство", "space"))
+            return self._extract_name_after_keyword(
+                text, ("пространстве", "пространство", "space")
+            )
         return None
 
     def _infer_time_period(self, text: str) -> str | None:
