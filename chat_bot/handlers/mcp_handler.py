@@ -52,6 +52,18 @@ class MCPHandler:
             llm=assistant.llm,
             routing_llm=getattr(assistant, "routing_llm", assistant.llm),
         )
+        self.light_task_agent: Optional[SimpleTaskAgent] = None
+        light_model = getattr(getattr(assistant, "config", None), "light_model", None)
+        light_llm = getattr(assistant, "light_llm", None)
+        if (
+            isinstance(light_model, str)
+            and light_model.strip()
+            and light_llm is not None
+        ):
+            self.light_task_agent = SimpleTaskAgent(
+                llm=light_llm,
+                routing_llm=getattr(assistant, "routing_llm", light_llm),
+            )
 
         # Read configuration from environment if not provided
         if mcp_config is None:
@@ -212,18 +224,130 @@ class MCPHandler:
         )
 
         try:
-            response = await self.task_agent.run(
+            task_agent = self._select_task_agent(text=text, history=history)
+            response = await task_agent.run(
                 message=text,
                 tools=self._tools,
                 history=history,
                 user_profiles=user_profiles,
                 current_user=user_profile,
             )
+            if task_agent is self.light_task_agent and self._is_light_model_error(
+                response
+            ):
+                logger.warning(
+                    "Light model failed; retrying task request with main model",
+                    extra={
+                        "event_type": "task_agent_light_fallback",
+                        "error_response": response[:500],
+                    },
+                )
+                response = await self.task_agent.run(
+                    message=text,
+                    tools=self._tools,
+                    history=history,
+                    user_profiles=user_profiles,
+                    current_user=user_profile,
+                )
             return response
 
         except Exception as e:
             logger.error(f"Error processing MCP request: {e}", exc_info=True)
             return f"❌ Ошибка при обработке запроса: {str(e)}"
+
+    def _select_task_agent(
+        self,
+        text: str,
+        history: Optional[List[Message]] = None,
+    ) -> SimpleTaskAgent:
+        """Choose light or main task agent for a natural-language request."""
+        if self.light_task_agent is None:
+            logger.debug("Light task agent is not configured; using main model")
+            return self.task_agent
+
+        if os.getenv("SIMPLE_TASK_AGENT_LIGHT_ENABLED", "true").lower() != "true":
+            logger.debug("Light task routing disabled; using main model")
+            return self.task_agent
+
+        if self._is_complex_task_request(text=text, history=history):
+            logger.info(
+                "Selected main model for complex task request",
+                extra={"event_type": "task_agent_model_route", "model_tier": "main"},
+            )
+            return self.task_agent
+
+        logger.info(
+            "Selected light model for simple task request",
+            extra={"event_type": "task_agent_model_route", "model_tier": "light"},
+        )
+        return self.light_task_agent
+
+    @staticmethod
+    def _is_complex_task_request(
+        text: str,
+        history: Optional[List[Message]] = None,
+    ) -> bool:
+        """Heuristic guardrail for requests that should stay on the main model."""
+        normalized = text.lower()
+        complex_markers = (
+            "по диалогу",
+            "из диалога",
+            "по обсуждению",
+            "из обсуждения",
+            "из переписки",
+            "по переписке",
+            "синхрониз",
+            "массов",
+            "mass",
+            "разбей",
+            "разбить",
+            "подзадач",
+            "эпик",
+            "epic",
+            "отчёт",
+            "отчет",
+            "сводк",
+            "аналитик",
+            "за неделю",
+            "за месяц",
+            "за квартал",
+            "по всем",
+            "для всех",
+        )
+        if any(marker in normalized for marker in complex_markers):
+            return True
+
+        words = normalized.split()
+        if len(words) > int(os.getenv("SIMPLE_TASK_AGENT_LIGHT_MAX_WORDS", "28")):
+            return True
+
+        history_count = len(history or [])
+        if history_count >= int(
+            os.getenv("SIMPLE_TASK_AGENT_COMPLEX_HISTORY_THRESHOLD", "8")
+        ):
+            history_markers = ("это", "туда", "по ней", "по нему", "как обсуждали")
+            return any(marker in normalized for marker in history_markers)
+
+        return False
+
+    @staticmethod
+    def _is_light_model_error(response: str) -> bool:
+        """Return true when the light model is unavailable or misconfigured."""
+        normalized = response.lower()
+        if "ошибка при работе с задачами" not in normalized:
+            return False
+        return any(
+            marker in normalized
+            for marker in (
+                "model",
+                "not found",
+                "404",
+                "connection",
+                "connect",
+                "refused",
+                "unavailable",
+            )
+        )
 
     async def _load_chat_context(
         self,

@@ -126,3 +126,34 @@ class TestMCPHandlerContext:
             chat_id=123,
             limit=10,
         )
+
+    def test_select_task_agent_uses_light_agent_for_simple_request(self) -> None:
+        assistant = MagicMock()
+        assistant.config.light_model = "qwen3:8b"
+        assistant.light_llm = MagicMock()
+        assistant.routing_llm = assistant.light_llm
+        assistant.llm = MagicMock()
+        handler = MCPHandler(assistant=assistant)
+
+        selected = handler._select_task_agent(
+            text="покажи мои задачи",
+            history=[],
+        )
+
+        assert handler.light_task_agent is not None
+        assert selected is handler.light_task_agent
+
+    def test_select_task_agent_keeps_main_agent_for_complex_request(self) -> None:
+        assistant = MagicMock()
+        assistant.config.light_model = "qwen3:8b"
+        assistant.light_llm = MagicMock()
+        assistant.routing_llm = assistant.light_llm
+        assistant.llm = MagicMock()
+        handler = MCPHandler(assistant=assistant)
+
+        selected = handler._select_task_agent(
+            text="создай задачи по диалогу и назначь ответственных",
+            history=[],
+        )
+
+        assert selected is handler.task_agent
