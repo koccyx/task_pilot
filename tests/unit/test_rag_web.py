@@ -2,10 +2,44 @@
 
 from fastapi.testclient import TestClient
 
+from chat_bot.models import UserProfile
 from chat_bot.rag.service import RagService
 from chat_bot.rag.settings import RagSettings
 from chat_bot.rag.web import _format_moscow_time, create_app
 from tests.unit.test_rag_service import InMemoryRagRepository, InMemoryVectorStore
+
+
+class InMemoryUserAdminRepository:
+    def __init__(self) -> None:
+        self.profiles: dict[tuple[int, int], UserProfile] = {}
+
+    async def upsert_user_profile(self, profile: UserProfile) -> UserProfile:
+        key = (profile.chat_id, profile.telegram_user_id)
+        self.profiles[key] = profile
+        return profile
+
+    async def list_all_user_profiles(self) -> list[UserProfile]:
+        return sorted(
+            self.profiles.values(),
+            key=lambda profile: (profile.chat_id, profile.introduced_name),
+        )
+
+    async def set_user_admin(
+        self,
+        chat_id: int,
+        telegram_user_id: int,
+        is_admin: bool,
+    ) -> UserProfile | None:
+        key = (chat_id, telegram_user_id)
+        profile = self.profiles.get(key)
+        if profile is None:
+            return None
+        updated = profile.model_copy(update={"is_admin": is_admin})
+        self.profiles[key] = updated
+        return updated
+
+    async def delete_user_profile(self, chat_id: int, telegram_user_id: int) -> bool:
+        return self.profiles.pop((chat_id, telegram_user_id), None) is not None
 
 
 def test_web_upload_lists_and_shows_document(tmp_path) -> None:
@@ -137,3 +171,74 @@ def test_web_deletes_chunk(tmp_path) -> None:
 
 def test_format_moscow_time_converts_utc_iso_timestamp() -> None:
     assert _format_moscow_time("2026-06-21T10:15:00+00:00") == ("21.06.2026 13:15 МСК")
+
+
+def test_users_page_creates_admin_user() -> None:
+    service = RagService(
+        settings=RagSettings(embedding_provider="hashing", embedding_dimension=384),
+        repository=InMemoryRagRepository(),
+        vector_store=InMemoryVectorStore(),
+    )
+    user_repository = InMemoryUserAdminRepository()
+    client = TestClient(create_app(service, user_repository=user_repository))
+
+    response = client.post(
+        "/users",
+        data={
+            "chat_id": "100",
+            "telegram_user_id": "200",
+            "telegram_username": "stepan",
+            "telegram_display_name": "Stepan",
+            "introduced_name": "Степан",
+            "kaiten_user_name": "Степан Федоров",
+            "kaiten_user_id": "300",
+            "is_admin": "on",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    profile = user_repository.profiles[(100, 200)]
+    assert profile.is_admin is True
+    assert profile.kaiten_user_id == 300
+
+    page = client.get("/users")
+    assert page.status_code == 200
+    assert "Степан" in page.text
+    assert "Админ" in page.text
+    assert "Пользователи" in page.text
+
+
+def test_users_page_updates_admin_flag_and_deletes_user() -> None:
+    service = RagService(
+        settings=RagSettings(embedding_provider="hashing", embedding_dimension=384),
+        repository=InMemoryRagRepository(),
+        vector_store=InMemoryVectorStore(),
+    )
+    user_repository = InMemoryUserAdminRepository()
+    user_repository.profiles[(100, 200)] = UserProfile(
+        chat_id=100,
+        telegram_user_id=200,
+        telegram_username="stepan",
+        telegram_display_name="Stepan",
+        introduced_name="Степан",
+        is_admin=True,
+    )
+    client = TestClient(create_app(service, user_repository=user_repository))
+
+    demote_response = client.post(
+        "/users/100/200/admin",
+        data={},
+        follow_redirects=False,
+    )
+
+    assert demote_response.status_code == 303
+    assert user_repository.profiles[(100, 200)].is_admin is False
+
+    delete_response = client.post(
+        "/users/100/200/delete",
+        follow_redirects=False,
+    )
+
+    assert delete_response.status_code == 303
+    assert user_repository.profiles == {}

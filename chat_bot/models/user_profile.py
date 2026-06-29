@@ -22,6 +22,9 @@ class UserProfile(BaseModel):
     kaiten_user_id: Optional[int] = Field(
         None, description="Optional stable Kaiten user ID"
     )
+    is_admin: bool = Field(
+        False, description="Whether the user has Task Pilot admin privileges"
+    )
     introduced_at: Optional[datetime] = Field(
         None, description="When the user introduced themselves"
     )

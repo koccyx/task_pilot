@@ -77,6 +77,7 @@ class ChatRepository(BaseChatRepository):
                     introduced_name TEXT NOT NULL,
                     kaiten_user_name TEXT,
                     kaiten_user_id BIGINT,
+                    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                     introduced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE(chat_id, telegram_user_id)
@@ -84,6 +85,9 @@ class ChatRepository(BaseChatRepository):
 
                 ALTER TABLE user_profiles
                 ADD COLUMN IF NOT EXISTS kaiten_user_id BIGINT;
+
+                ALTER TABLE user_profiles
+                ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 
                 CREATE TABLE IF NOT EXISTS ai_user_request_metrics (
                     request_id TEXT PRIMARY KEY,
@@ -163,6 +167,7 @@ class ChatRepository(BaseChatRepository):
             introduced_name=record["introduced_name"],
             kaiten_user_name=record["kaiten_user_name"],
             kaiten_user_id=record["kaiten_user_id"],
+            is_admin=record["is_admin"],
             introduced_at=record["introduced_at"],
             updated_at=record["updated_at"],
         )
@@ -298,7 +303,7 @@ class ChatRepository(BaseChatRepository):
                 """
                 SELECT chat_id, telegram_user_id, telegram_username,
                        telegram_display_name, introduced_name, kaiten_user_name,
-                       kaiten_user_id,
+                       kaiten_user_id, is_admin,
                        introduced_at, updated_at
                 FROM user_profiles
                 WHERE chat_id = $1 AND telegram_user_id = $2
@@ -318,9 +323,9 @@ class ChatRepository(BaseChatRepository):
                 INSERT INTO user_profiles (
                     chat_id, telegram_user_id, telegram_username,
                     telegram_display_name, introduced_name, kaiten_user_name,
-                    kaiten_user_id, introduced_at, updated_at
+                    kaiten_user_id, is_admin, introduced_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
                 ON CONFLICT (chat_id, telegram_user_id) DO UPDATE SET
                     telegram_username = EXCLUDED.telegram_username,
                     telegram_display_name = EXCLUDED.telegram_display_name,
@@ -330,7 +335,7 @@ class ChatRepository(BaseChatRepository):
                     updated_at = NOW()
                 RETURNING chat_id, telegram_user_id, telegram_username,
                           telegram_display_name, introduced_name, kaiten_user_name,
-                          kaiten_user_id,
+                          kaiten_user_id, is_admin,
                           introduced_at, updated_at
                 """,
                 profile.chat_id,
@@ -340,6 +345,7 @@ class ChatRepository(BaseChatRepository):
                 profile.introduced_name,
                 profile.kaiten_user_name,
                 profile.kaiten_user_id,
+                profile.is_admin,
             )
 
         if row is None:
@@ -354,7 +360,7 @@ class ChatRepository(BaseChatRepository):
                 """
                 SELECT chat_id, telegram_user_id, telegram_username,
                        telegram_display_name, introduced_name, kaiten_user_name,
-                       kaiten_user_id, introduced_at, updated_at
+                       kaiten_user_id, is_admin, introduced_at, updated_at
                 FROM user_profiles
                 WHERE chat_id = $1
                 ORDER BY introduced_name ASC, telegram_user_id ASC
@@ -362,6 +368,57 @@ class ChatRepository(BaseChatRepository):
                 chat_id,
             )
         return [self._profile_from_record(row) for row in rows]
+
+    async def list_all_user_profiles(self) -> List[UserProfile]:
+        """List all known user profiles across chats for the admin web UI."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT chat_id, telegram_user_id, telegram_username,
+                       telegram_display_name, introduced_name, kaiten_user_name,
+                       kaiten_user_id, is_admin, introduced_at, updated_at
+                FROM user_profiles
+                ORDER BY chat_id ASC, introduced_name ASC, telegram_user_id ASC
+                """)
+        return [self._profile_from_record(row) for row in rows]
+
+    async def set_user_admin(
+        self,
+        chat_id: int,
+        telegram_user_id: int,
+        is_admin: bool,
+    ) -> Optional[UserProfile]:
+        """Update admin flag for one user profile."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE user_profiles
+                SET is_admin = $3, updated_at = NOW()
+                WHERE chat_id = $1 AND telegram_user_id = $2
+                RETURNING chat_id, telegram_user_id, telegram_username,
+                          telegram_display_name, introduced_name, kaiten_user_name,
+                          kaiten_user_id, is_admin, introduced_at, updated_at
+                """,
+                chat_id,
+                telegram_user_id,
+                is_admin,
+            )
+        return self._profile_from_record(row) if row else None
+
+    async def delete_user_profile(self, chat_id: int, telegram_user_id: int) -> bool:
+        """Delete one user profile from the admin web UI."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                DELETE FROM user_profiles
+                WHERE chat_id = $1 AND telegram_user_id = $2
+                """,
+                chat_id,
+                telegram_user_id,
+            )
+        return result.endswith(" 1")
 
     async def save_ai_user_request_metric(self, metric: RequestMetric) -> None:
         """Persist an aggregated AI metric for one user request."""
