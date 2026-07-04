@@ -222,7 +222,9 @@ class TestSimpleTaskAgent:
 
         assert 'manage_cards с action="list"' in prompt
         assert "owner_id" in prompt
-        assert "Для просмотра по исполнителю доска не обязательна" in prompt
+        assert 'board="Основная доска"' in prompt
+        assert 'column="На рассмотрении"' in prompt
+        assert "Для просмотра задач другого человека доска не обязательна" in prompt
         assert "Запрос просмотра не должен создавать" in prompt
         assert "Kaiten: Stepan1922" in prompt
         assert "Kaiten ID: 1056226" in prompt

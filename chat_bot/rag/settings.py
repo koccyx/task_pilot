@@ -18,6 +18,8 @@ class RagSettings(BaseModel):
     embedding_api_key: str = Field(default="")
     embedding_timeout_seconds: float = Field(default=60.0, gt=0)
     embedding_dimension: int = Field(default=1024, ge=32)
+    reranker_enabled: bool = Field(default=True)
+    reranker_provider: str = Field(default="lexical")
     chunk_size: int = Field(default=700, ge=200)
     chunk_overlap: int = Field(default=150, ge=0)
 
@@ -41,6 +43,9 @@ class RagSettings(BaseModel):
                 os.getenv("RAG_EMBEDDING_TIMEOUT_SECONDS", "60")
             ),
             embedding_dimension=int(os.getenv("RAG_EMBEDDING_DIMENSION", "1024")),
+            reranker_enabled=os.getenv("RAG_RERANKER_ENABLED", "true").lower()
+            == "true",
+            reranker_provider=os.getenv("RAG_RERANKER_PROVIDER", "lexical"),
             chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "700")),
             chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "150")),
         )

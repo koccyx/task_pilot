@@ -15,6 +15,7 @@ from .repository import (
     StoredChunk,
     StoredDocument,
 )
+from .reranker import SearchReranker, build_reranker
 from .retrieval import bm25_search, reciprocal_rank_fusion
 from .settings import RagSettings
 from .vector_store import QdrantVectorStore, VectorSearchResult, VectorStore
@@ -37,6 +38,7 @@ class RagService:
         repository: Optional[RagRepository] = None,
         vector_store: Optional[VectorStore] = None,
         embedder: Optional[TextEmbedder] = None,
+        reranker: Optional[SearchReranker] = None,
     ) -> None:
         self.settings = settings
         self.repository = repository or PostgresRagRepository.from_env()
@@ -52,6 +54,10 @@ class RagService:
             url=settings.qdrant_url,
             collection_name=settings.qdrant_collection,
             vector_size=settings.embedding_dimension,
+        )
+        self.reranker = reranker or build_reranker(
+            provider=settings.reranker_provider,
+            enabled=settings.reranker_enabled,
         )
 
     async def ingest_file(
@@ -139,7 +145,7 @@ class RagService:
         return chunk if deleted else None
 
     async def search(self, query: str, limit: int = 5) -> list[VectorSearchResult]:
-        """Search indexed chunks with dense retrieval, BM25 and RRF."""
+        """Search indexed chunks with dense retrieval, BM25, RRF and reranking."""
         if not query.strip():
             return []
         candidate_limit = max(limit * 4, limit)
@@ -152,7 +158,7 @@ class RagService:
         fused_results = reciprocal_rank_fusion(
             dense_results=dense_results,
             lexical_results=lexical_results,
-            limit=limit,
+            limit=candidate_limit,
         )
         if any(not result.filename for result in fused_results):
             documents = await self.repository.list_documents()
@@ -170,7 +176,7 @@ class RagService:
                 )
                 for result in fused_results
             ]
-        return fused_results
+        return self.reranker.rerank(query=query, results=fused_results, limit=limit)
 
     def _embed_documents(self, texts: list[str]) -> list[list[float]]:
         embed_documents = getattr(self.embedder, "embed_documents", None)

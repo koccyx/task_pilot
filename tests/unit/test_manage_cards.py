@@ -52,6 +52,7 @@ class TestManageCards:
                 board=None,
                 space_id=None,
                 column_id=None,
+                column=None,
                 condition=1,
                 query=None,
                 due_date_after=None,
@@ -85,6 +86,7 @@ class TestManageCards:
                     board=None,
                     space_id=None,
                     column_id=None,
+                    column=None,
                     condition=1,
                     query=None,
                     due_date_after=None,
@@ -96,6 +98,41 @@ class TestManageCards:
                     skip=0,
                     ctx=None,
                 )
+
+    @pytest.mark.asyncio
+    async def test_list_cards_resolves_column_name_to_column_id(self) -> None:
+        """Column names should be resolved against the selected board."""
+        client = MagicMock()
+        client.get = AsyncMock(
+            side_effect=[
+                {"columns": [{"id": 31, "title": "На рассмотрении"}]},
+                [],
+            ]
+        )
+
+        await _list_cards(
+            client=client,
+            board_id=20,
+            board=None,
+            space_id=None,
+            column_id=None,
+            column="На рассмотрении",
+            condition=1,
+            query=None,
+            due_date_after=None,
+            due_date_before=None,
+            owner_id=77,
+            owner_name=None,
+            tag_ids=None,
+            limit=50,
+            skip=0,
+            ctx=None,
+        )
+
+        client.get.assert_any_await("boards/20")
+        client.get.assert_awaited_with(
+            "cards?board_id=20&column_id=31&condition=1&owner_id=77&limit=50&offset=0"
+        )
 
     @pytest.mark.asyncio
     async def test_update_card_sends_due_date(self) -> None:

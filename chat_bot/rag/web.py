@@ -177,7 +177,7 @@ def create_app(
             '<p><a href="/">← Назад к списку</a></p>'
             f"<section><h2>{html.escape(document.filename)}</h2>"
             f"<p class='muted'>Загружен: {html.escape(_format_moscow_time(document.uploaded_at))} · "
-            f"{document.size_bytes} байт · чанков: {len(chunks)}</p>"
+            f"чанков: {len(chunks)}</p>"
             f"<form action='/documents/{document.id}/delete' method='post'>"
             "<button class='danger' type='submit'>Удалить документ</button>"
             "</form></section>"
@@ -647,7 +647,7 @@ def _search_form(query: str = "") -> str:
 
 async def _document_list(service: RagService, documents: list) -> str:
     if not documents:
-        rows = "<tr><td colspan='6' class='muted'>Файлы пока не загружены.</td></tr>"
+        rows = "<tr><td colspan='4' class='muted'>Файлы пока не загружены.</td></tr>"
     else:
         rendered_rows = []
         for document in documents:
@@ -655,8 +655,6 @@ async def _document_list(service: RagService, documents: list) -> str:
             rendered_rows.append(
                 "<tr>"
                 f"<td data-label='Файл'><a href='/documents/{document.id}'>{html.escape(document.filename)}</a></td>"
-                f"<td data-label='Тип'>{html.escape(document.content_type)}</td>"
-                f"<td data-label='Размер'>{document.size_bytes}</td>"
                 f"<td data-label='Чанки'>{chunk_count}</td>"
                 f"<td data-label='Загружен'>{html.escape(_format_moscow_time(document.uploaded_at))}</td>"
                 "<td class='actions' data-label='Действие'>"
@@ -676,8 +674,6 @@ async def _document_list(service: RagService, documents: list) -> str:
     <thead>
       <tr>
         <th>Файл</th>
-        <th>Тип</th>
-        <th>Размер</th>
         <th>Чанки</th>
         <th>Загружен</th>
         <th></th>

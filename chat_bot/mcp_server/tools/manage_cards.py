@@ -8,7 +8,12 @@ from chat_bot.mcp_server.mcp_instance import mcp
 from chat_bot.mcp_server.models.card import Card
 from pydantic import Field, ValidationError
 
-from .helpers import find_board_by_name, find_space_by_name, find_user_by_name
+from .helpers import (
+    find_board_by_name,
+    find_column_by_name,
+    find_space_by_name,
+    find_user_by_name,
+)
 
 logger = get_logger(__name__)
 
@@ -294,6 +299,7 @@ async def _list_cards(
     board: Optional[str],
     space_id: Optional[int],
     column_id: Optional[int],
+    column: Optional[str],
     condition: Optional[int],
     query: Optional[str],
     due_date_after: Optional[str],
@@ -311,12 +317,27 @@ async def _list_cards(
         if ctx:
             await ctx.report_progress(progress=20, total=100)
             ctx.debug(f"Resolving board name: {board}")
-        found_id = await find_board_by_name(client, board)
-        if found_id is None:
-            raise ValueError(f"Board not found: {board}")
-        resolved_board_id = found_id
+        resolved_board_id = await _resolve_board_id(client, board_id, board, ctx)
         if ctx:
-            ctx.info(f"Board '{board}' resolved to ID: {found_id}")
+            ctx.info(f"Board '{board}' resolved to ID: {resolved_board_id}")
+
+    resolved_column_id = column_id
+    if column is not None:
+        if resolved_board_id is None:
+            raise ValueError("Board ID or board name must be provided with column name")
+        if ctx:
+            await ctx.report_progress(progress=25, total=100)
+            ctx.debug(f"Resolving column name: {column}")
+        found_column_id = await find_column_by_name(
+            client,
+            column,
+            board_id=resolved_board_id,
+        )
+        if found_column_id is None:
+            raise ValueError(f"Column not found: {column}")
+        resolved_column_id = found_column_id
+        if ctx:
+            ctx.info(f"Column '{column}' resolved to ID: {found_column_id}")
 
     resolved_owner_id = owner_id
     if owner_name is not None:
@@ -339,8 +360,8 @@ async def _list_cards(
         params["board_id"] = resolved_board_id
     if space_id is not None:
         params["space_id"] = space_id
-    if column_id is not None:
-        params["column_id"] = column_id
+    if resolved_column_id is not None:
+        params["column_id"] = resolved_column_id
     if condition is not None:
         params["condition"] = condition
     if query is not None:
@@ -530,6 +551,13 @@ async def manage_cards(
     description: Optional[str] = Field(None, description="Card description"),
     space_id: Optional[int] = Field(None, description="Space ID for filtering", gt=0),
     column_id: Optional[int] = Field(None, description="Column ID for filtering", gt=0),
+    column: Optional[str] = Field(
+        None,
+        description=(
+            "Column name for filtering - automatically resolved to ID, "
+            "requires board or board_id"
+        ),
+    ),
     condition: Optional[int] = Field(1, description="1=active, 2=archived", ge=1, le=2),
     query: Optional[str] = Field(None, description="Text search query"),
     due_date_after: Optional[str] = Field(
@@ -563,6 +591,7 @@ async def manage_cards(
         description: Card description.
         space_id: Space ID for filtering.
         column_id: Column ID for filtering.
+        column: Column name for filtering (alternative to column_id, auto-resolved).
         condition: Card condition (1=active, 2=archived).
         query: Text search query (required for search).
         due_date_after: Filter cards after this date.
@@ -651,6 +680,7 @@ async def manage_cards(
                 board,
                 space_id,
                 column_id,
+                column,
                 condition,
                 query,
                 due_date_after,

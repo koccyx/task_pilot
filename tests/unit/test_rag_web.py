@@ -65,6 +65,9 @@ def test_web_upload_lists_and_shows_document(tmp_path) -> None:
     assert "Загруженные файлы" in index_response.text
     assert "МСК" in index_response.text
     assert 'class="table-scroll"' in index_response.text
+    assert "<th>Тип</th>" not in index_response.text
+    assert "<th>Размер</th>" not in index_response.text
+    assert "text/plain" not in index_response.text
 
     document = next(iter(service.repository.documents.values()))
     document_response = client.get(f"/documents/{document.id}")
@@ -72,6 +75,7 @@ def test_web_upload_lists_and_shows_document(tmp_path) -> None:
     assert "Internal manual content" in document_response.text
     assert "Загружен:" in document_response.text
     assert "МСК" in document_response.text
+    assert "байт" not in document_response.text
 
 
 def test_web_search_displays_results(tmp_path) -> None:

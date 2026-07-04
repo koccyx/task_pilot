@@ -59,6 +59,27 @@ class FixedDenseVectorStore(InMemoryVectorStore):
         return self.results[:limit]
 
 
+class KeywordReranker:
+    """Reranker test double that promotes chunks containing a keyword."""
+
+    def __init__(self, keyword: str) -> None:
+        self.keyword = keyword
+
+    def rerank(
+        self,
+        query: str,
+        results: list[VectorSearchResult],
+        limit: int,
+    ) -> list[VectorSearchResult]:
+        _ = query
+        ordered = sorted(
+            results,
+            key=lambda result: self.keyword.lower() in result.text.lower(),
+            reverse=True,
+        )
+        return ordered[:limit]
+
+
 class InMemoryRagRepository:
     """Async metadata repository test double."""
 
@@ -256,6 +277,62 @@ async def test_search_fuses_dense_and_bm25_with_rrf(tmp_path) -> None:
         noise_chunk.id,
     ]
     assert results[0].filename == "policy.txt"
+
+
+@pytest.mark.asyncio
+async def test_search_applies_reranker_after_rrf(tmp_path) -> None:
+    _ = tmp_path
+    repository = InMemoryRagRepository()
+    document = StoredDocument(
+        id="doc",
+        filename="policy.txt",
+        content_type="text/plain",
+        size_bytes=10,
+        stored_path="postgres://rag_documents.content",
+        uploaded_at="2026-06-21T00:00:00+00:00",
+    )
+    first_chunk = StoredChunk(
+        id="first-chunk",
+        document_id=document.id,
+        chunk_index=0,
+        text="Общий регламент без итогового маркера.",
+    )
+    promoted_chunk = StoredChunk(
+        id="promoted-chunk",
+        document_id=document.id,
+        chunk_index=1,
+        text="Этот фрагмент содержит marker и должен стать первым после rerank.",
+    )
+    await repository.add_document(document, [first_chunk, promoted_chunk], b"content")
+
+    vector_store = FixedDenseVectorStore(
+        [
+            VectorSearchResult(
+                chunk_id=first_chunk.id,
+                document_id=document.id,
+                filename=document.filename,
+                text=first_chunk.text,
+                score=0.99,
+            ),
+            VectorSearchResult(
+                chunk_id=promoted_chunk.id,
+                document_id=document.id,
+                filename=document.filename,
+                text=promoted_chunk.text,
+                score=0.10,
+            ),
+        ]
+    )
+    service = RagService(
+        settings=RagSettings(embedding_provider="hashing", embedding_dimension=384),
+        repository=repository,
+        vector_store=vector_store,
+        reranker=KeywordReranker("marker"),
+    )
+
+    results = await service.search("регламент", limit=1)
+
+    assert [result.chunk_id for result in results] == [promoted_chunk.id]
 
 
 @pytest.mark.asyncio
